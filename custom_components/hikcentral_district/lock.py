@@ -22,8 +22,8 @@ class DoorLockEntity(
     """HA Lock entity wrapping a HikCentral door element.
 
     Maps lock_state:
-      0 = unlocked → is_locked False
-      1 = locked   → is_locked True
+      0 = locked   → is_locked True
+      1 = unlocked → is_locked False
       other        → is_locked None (state derives to unknown)
 
     State itself is derived by the LockEntity base class from is_locked
@@ -82,9 +82,9 @@ class DoorLockEntity(
     def is_locked(self) -> bool | None:
         """Return True if locked, False if unlocked, None if unknown."""
         lock_state = self._door.lock_state
-        if lock_state == 1:
-            return True
         if lock_state == 0:
+            return True
+        if lock_state == 1:
             return False
         return None
 

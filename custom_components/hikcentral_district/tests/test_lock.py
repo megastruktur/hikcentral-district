@@ -15,23 +15,23 @@ class TestDoorLockEntityState:
 
         return DoorLockEntity(mock_door, mock_coordinator)
 
-    def test_lock_state_0_returns_unlocked(self, mock_door, mock_coordinator):
-        """LockState=0 means unlocked (HA STATE_UNLOCKED)."""
+    def test_lock_state_0_returns_locked(self, mock_door, mock_coordinator):
+        """LockState=0 means locked (HA STATE_LOCKED)."""
         from hikcentral_district.lock import DoorLockEntity
 
         mock_door.lock_state = 0
         entity = DoorLockEntity(mock_door, mock_coordinator)
-        assert entity.is_locked is False
-        assert entity.state == LockState.UNLOCKED
+        assert entity.is_locked is True
+        assert entity.state == LockState.LOCKED
 
-    def test_lock_state_1_returns_locked(self, mock_door, mock_coordinator):
-        """LockState=1 means locked (HA STATE_LOCKED)."""
+    def test_lock_state_1_returns_unlocked(self, mock_door, mock_coordinator):
+        """LockState=1 means unlocked (HA STATE_UNLOCKED)."""
         from hikcentral_district.lock import DoorLockEntity
 
         mock_door.lock_state = 1
         entity = DoorLockEntity(mock_door, mock_coordinator)
-        assert entity.is_locked is True
-        assert entity.state == LockState.LOCKED
+        assert entity.is_locked is False
+        assert entity.state == LockState.UNLOCKED
 
     def test_lock_state_2_returns_unknown(self, mock_door, mock_coordinator):
         """LockState=2 means blocked → is_locked None → state unknown (None).
@@ -47,19 +47,19 @@ class TestDoorLockEntityState:
         assert entity.is_locked is None
         assert entity.state is None
 
-    def test_is_locked_true_when_lock_state_1(self, mock_door, mock_coordinator):
-        """is_locked is True when door lock_state is 1."""
-        from hikcentral_district.lock import DoorLockEntity
-
-        mock_door.lock_state = 1
-        entity = DoorLockEntity(mock_door, mock_coordinator)
-        assert entity.is_locked is True
-
-    def test_is_locked_false_when_lock_state_0(self, mock_door, mock_coordinator):
-        """is_locked is False when door lock_state is 0."""
+    def test_is_locked_true_when_lock_state_0(self, mock_door, mock_coordinator):
+        """is_locked is True when door lock_state is 0."""
         from hikcentral_district.lock import DoorLockEntity
 
         mock_door.lock_state = 0
+        entity = DoorLockEntity(mock_door, mock_coordinator)
+        assert entity.is_locked is True
+
+    def test_is_locked_false_when_lock_state_1(self, mock_door, mock_coordinator):
+        """is_locked is False when door lock_state is 1."""
+        from hikcentral_district.lock import DoorLockEntity
+
+        mock_door.lock_state = 1
         entity = DoorLockEntity(mock_door, mock_coordinator)
         assert entity.is_locked is False
 
