@@ -94,7 +94,7 @@ class TestHikCentralDistrictUnload:
     async def test_unload_calls_async_unload_entry(
         self, hass, mock_config_entry, mock_client
     ):
-        """Test unload entry calls hass.config_entries.async_unload_entry."""
+        """Test unload entry calls async_unload_platforms."""
         hass.data["hikcentral_district"] = {
             mock_config_entry.entry_id: {
                 "coordinator": None,
@@ -107,4 +107,4 @@ class TestHikCentralDistrictUnload:
         result = await async_unload_entry(hass, mock_config_entry)
 
         assert result is True
-        hass.config_entries.async_unload_entry.assert_called_once()
+        hass.config_entries.async_unload_platforms.assert_called_once()

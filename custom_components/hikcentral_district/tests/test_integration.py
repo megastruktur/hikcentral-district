@@ -46,7 +46,7 @@ def real_hass():
     hass.data = {}
     hass.config_entries = MagicMock()
     hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
-    hass.config_entries.async_unload_entry = AsyncMock(return_value=True)
+    hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
     hass.services = MagicMock()
     hass.services.async_register = MagicMock()
     hass.services.async_remove = AsyncMock()
@@ -228,14 +228,14 @@ async def test_async_unload_entry_calls_async_unload(
     integration_config_entry,
     integration_mock_client,
 ):
-    """async_unload_entry calls hass.config_entries.async_unload_entry."""
+    """async_unload_entry calls async_unload_platforms."""
     await setup_integration(
         real_hass, integration_config_entry, integration_mock_client
     )
     result = await async_unload_entry(real_hass, integration_config_entry)
 
     assert result is True
-    real_hass.config_entries.async_unload_entry.assert_called_once()
+    real_hass.config_entries.async_unload_platforms.assert_called_once()
 
 
 # ---------------------------------------------------------------------

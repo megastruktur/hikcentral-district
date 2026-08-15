@@ -35,7 +35,7 @@ def hass():
     hass.data = {}
     hass.config_entries = MagicMock()
     hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
-    hass.config_entries.async_unload_entry = AsyncMock(return_value=True)
+    hass.config_entries.async_unload_platforms = AsyncMock(return_value=True)
     hass.services = MagicMock()
     hass.services.async_register = MagicMock()
     hass.services.async_remove = AsyncMock()
