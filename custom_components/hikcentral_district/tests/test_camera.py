@@ -77,3 +77,77 @@ class TestHikDoorCamera:
         # If it exists and is not None, it should NOT be an rtsp URL
         if pict is not None:
             assert not pict.startswith("rtsp://")
+
+
+class TestAsyncRequestSnapshot:
+    """Test HikDoorCamera.async_request_snapshot thumbnail + ffmpeg fallback."""
+
+    @pytest.mark.asyncio
+    async def test_snapshot_returns_hikcentral_thumbnail(
+        self, hass, mock_camera, mock_coordinator, mock_client
+    ):
+        """Thumbnail bytes from the HikCentral HTTP API are returned directly."""
+        from hikcentral_district.camera import HikDoorCamera
+
+        mock_client.get_camera_thumbnail.return_value = b"\xff\xd8\xff\xe0thumb"
+        entity = HikDoorCamera(mock_camera, mock_coordinator)
+        entity.hass = hass
+
+        result = await entity.async_request_snapshot()
+
+        assert result == b"\xff\xd8\xff\xe0thumb"
+        mock_client.get_camera_thumbnail.assert_called_once_with(mock_camera.id)
+
+    @pytest.mark.asyncio
+    async def test_snapshot_falls_back_to_ffmpeg_when_thumbnail_none(
+        self, hass, mock_camera, mock_coordinator
+    ):
+        """When the thumbnail is None, ffmpeg over RTSP is attempted as fallback."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from hikcentral_district.camera import HikDoorCamera
+
+        entity = HikDoorCamera(mock_camera, mock_coordinator)
+        entity.hass = hass
+
+        proc = MagicMock()
+        proc.wait = AsyncMock()
+        proc.returncode = 1  # ffmpeg fails
+
+        with patch(
+            "hikcentral_district.camera.asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=proc),
+        ) as mock_exec:
+            result = await entity.async_request_snapshot()
+
+        assert result is None
+        mock_exec.assert_awaited_once()
+        # The RTSP URL must have been passed to ffmpeg
+        args = mock_exec.call_args.args
+        assert any("rtsp://admin:password@192.168.1.100" in str(a) for a in args)
+
+    @pytest.mark.asyncio
+    async def test_snapshot_falls_back_when_thumbnail_raises(
+        self, hass, mock_camera, mock_coordinator, mock_client
+    ):
+        """When the thumbnail call raises, the ffmpeg fallback is still attempted."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from hikcentral_district.camera import HikDoorCamera
+
+        mock_client.get_camera_thumbnail.side_effect = RuntimeError("not logged in")
+        entity = HikDoorCamera(mock_camera, mock_coordinator)
+        entity.hass = hass
+
+        proc = MagicMock()
+        proc.wait = AsyncMock()
+        proc.returncode = 1  # ffmpeg fails
+
+        with patch(
+            "hikcentral_district.camera.asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=proc),
+        ) as mock_exec:
+            result = await entity.async_request_snapshot()
+
+        assert result is None
+        mock_exec.assert_awaited_once()

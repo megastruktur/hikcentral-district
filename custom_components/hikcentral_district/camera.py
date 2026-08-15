@@ -59,11 +59,23 @@ class HikDoorCamera(Camera):
         return None
 
     async def async_request_snapshot(self) -> bytes | None:
-        """Grab a single JPEG snapshot from the camera via ffmpeg.
+        """Grab a single JPEG snapshot from the camera.
 
-        Writes the JPEG to a temp file then reads it back so ffmpeg can
-        write the bytes atomically. Cleans up the temp file afterwards.
+        Primary path: HikCentral thumbnail endpoint over HTTP (works even
+        when the camera's RTSP is not routable from HA). Fallback: ffmpeg
+        over RTSP when the camera is directly reachable.
         """
+        # 1) HikCentral thumbnail (HTTP) — reliable, no RTSP routing needed
+        try:
+            thumb = await self.hass.async_add_executor_job(
+                self._coordinator.client.get_camera_thumbnail, self._camera.id
+            )
+        except Exception:  # noqa: BLE001 — snapshot path must never block the fallback
+            thumb = None
+        if thumb:
+            return thumb
+
+        # 2) RTSP via ffmpeg as fallback
         rtsp = await self.stream_source()
         if not rtsp:
             return None

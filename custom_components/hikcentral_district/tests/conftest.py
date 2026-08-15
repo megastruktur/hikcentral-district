@@ -96,6 +96,8 @@ def mock_client():
     client.get_camera_elements = AsyncMock(mock_get_camera_elements)
     client.get_access_controllers = AsyncMock(mock_get_access_controllers)
     client.door_action = AsyncMock(mock_door_action)
+    # Sync method — returns raw JPEG bytes or None
+    client.get_camera_thumbnail = MagicMock(return_value=None)
 
     return client
 
