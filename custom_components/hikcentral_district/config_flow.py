@@ -13,6 +13,7 @@ from homeassistant.data_entry_flow import FlowResult
 from hikcentral_bumblebee import BumblebeeClient, HikCentralError
 
 from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
+from .options_flow import HikCentralDistrictOptionsFlow
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,3 +74,10 @@ class HikCentralDistrictConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=CONFIG_SCHEMA,
             errors=errors,
         )
+
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Return the options flow handler."""
+        return HikCentralDistrictOptionsFlow(config_entry)

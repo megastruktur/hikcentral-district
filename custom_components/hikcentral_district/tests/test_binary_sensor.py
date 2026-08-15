@@ -1,38 +1,121 @@
-"""Test binary_sensor.py — HikDoorBinarySensor for each door."""
+"""Test binary_sensor.py — HikDoorBinarySensor real integration behavior."""
+
+import pytest
+from unittest.mock import MagicMock
 
 
 class TestHikDoorBinarySensor:
-    """Test the HikDoorBinarySensor for door contact and online status."""
+    """Test HikDoorBinarySensor state and behavior."""
 
-    def test_magnet_state_0_is_closed(self, mock_door):
-        """Test MagnetState=0 means door closed (binary_sensor off/normal)."""
+    @pytest.fixture
+    def entity(self, mock_door, mock_coordinator):
+        """Create a HikDoorBinarySensor entity."""
+        from hikcentral_district.binary_sensor import HikDoorBinarySensor
+
+        entry = MagicMock()
+        entry.entry_id = "test_entry"
+        entry.options = {}
+        return HikDoorBinarySensor(mock_door, "door_contact", mock_coordinator, entry)
+
+    @pytest.fixture
+    def online_entity(self, mock_door, mock_coordinator):
+        """Create an online-status HikDoorBinarySensor entity."""
+        from hikcentral_district.binary_sensor import HikDoorBinarySensor
+
+        entry = MagicMock()
+        entry.entry_id = "test_entry"
+        entry.options = {}
+        return HikDoorBinarySensor(mock_door, "online", mock_coordinator, entry)
+
+    def test_door_contact_off_when_magnet_state_0(self, mock_door, mock_coordinator):
+        """MagnetState=0 means door closed → is_on=False."""
+        from hikcentral_district.binary_sensor import HikDoorBinarySensor
+
         mock_door.magnet_state = 0
-        # 0 = closed/normal = off in HA binary sensor
-        assert mock_door.magnet_state == 0
+        entry = MagicMock()
+        entry.entry_id = "test"
+        entry.options = {}
+        entity = HikDoorBinarySensor(mock_door, "door_contact", mock_coordinator, entry)
+        assert entity.is_on is False
 
-    def test_magnet_state_1_is_open(self, mock_door):
-        """Test MagnetState=1 means door open (binary_sensor on/alarm)."""
+    def test_door_contact_on_when_magnet_state_1(self, mock_door, mock_coordinator):
+        """MagnetState=1 means door open → is_on=True."""
+        from hikcentral_district.binary_sensor import HikDoorBinarySensor
+
         mock_door.magnet_state = 1
-        assert mock_door.magnet_state == 1
+        entry = MagicMock()
+        entry.entry_id = "test"
+        entry.options = {}
+        entity = HikDoorBinarySensor(mock_door, "door_contact", mock_coordinator, entry)
+        assert entity.is_on is True
 
-    def test_online_attribute_from_base_info(self, mock_door):
-        """Test online status from BaseInfo.Online."""
-        assert mock_door.online is True
+    def test_online_sensor_on_when_door_online(self, mock_door, mock_coordinator):
+        """Online sensor is_on=True when door is online."""
+        from hikcentral_district.binary_sensor import HikDoorBinarySensor
+
+        mock_door.online = True
+        entry = MagicMock()
+        entry.entry_id = "test"
+        entry.options = {}
+        entity = HikDoorBinarySensor(mock_door, "online", mock_coordinator, entry)
+        assert entity.is_on is True
+
+    def test_online_sensor_off_when_door_offline(self, mock_door, mock_coordinator):
+        """Online sensor is_on=False when door is offline."""
+        from hikcentral_district.binary_sensor import HikDoorBinarySensor
+
         mock_door.online = False
-        assert mock_door.online is False
+        entry = MagicMock()
+        entry.entry_id = "test"
+        entry.options = {}
+        entity = HikDoorBinarySensor(mock_door, "online", mock_coordinator, entry)
+        assert entity.is_on is False
 
-    def test_door_id_is_door_id(self, mock_door):
-        """Test door id is set correctly."""
-        assert mock_door.id == "996"
-        assert mock_door.name == "Kalitka_SP1"
+    def test_unique_id_contains_door_id_and_sensor_type(
+        self, mock_door, mock_coordinator
+    ):
+        """unique_id is in format binary_sensor.{door_id}.{sensor_type}."""
+        from hikcentral_district.binary_sensor import HikDoorBinarySensor
 
-    def test_multiple_doors(self, mock_door):
-        """Test that multiple doors produce independent sensor states."""
-        from hikcentral_bumblebee.models import DoorElement
+        entry = MagicMock()
+        entry.entry_id = "test"
+        entry.options = {}
+        entity = HikDoorBinarySensor(mock_door, "door_contact", mock_coordinator, entry)
+        assert "hikcentral_district.binary_sensor.996.door_contact" == entity.unique_id
 
-        door2 = DoorElement(id="997", name="Kalitka_SP17", online=True, magnet_state=1)
-        door3 = DoorElement(id="998", name="Kalitka_SP21", online=False, magnet_state=0)
+    def test_extra_state_attributes_contain_door_info(
+        self, mock_door, mock_coordinator
+    ):
+        """extra_state_attributes includes door_id, door_name, online."""
+        from hikcentral_district.binary_sensor import HikDoorBinarySensor
 
-        assert door2.magnet_state == 1
-        assert door3.online is False
-        assert door2.id != door3.id
+        entry = MagicMock()
+        entry.entry_id = "test"
+        entry.options = {}
+        entity = HikDoorBinarySensor(mock_door, "door_contact", mock_coordinator, entry)
+        attrs = entity.extra_state_attributes or {}
+        assert attrs.get("door_id") == "996"
+        assert attrs.get("door_name") == "Kalitka_SP1"
+        assert attrs.get("online") is True
+
+    def test_icon_door_open(self, mock_door, mock_coordinator):
+        """Door contact icon is door-open when is_on=True."""
+        from hikcentral_district.binary_sensor import HikDoorBinarySensor
+
+        mock_door.magnet_state = 1
+        entry = MagicMock()
+        entry.entry_id = "test"
+        entry.options = {}
+        entity = HikDoorBinarySensor(mock_door, "door_contact", mock_coordinator, entry)
+        assert entity.icon == "mdi:door-open"
+
+    def test_icon_door_closed(self, mock_door, mock_coordinator):
+        """Door contact icon is door-closed when is_on=False."""
+        from hikcentral_district.binary_sensor import HikDoorBinarySensor
+
+        mock_door.magnet_state = 0
+        entry = MagicMock()
+        entry.entry_id = "test"
+        entry.options = {}
+        entity = HikDoorBinarySensor(mock_door, "door_contact", mock_coordinator, entry)
+        assert entity.icon == "mdi:door-closed"

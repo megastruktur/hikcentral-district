@@ -49,6 +49,18 @@ class DoorLockEntity(LockEntity):
             "overall_status": door.overall_status,
         }
 
+    async def async_added_to_hass(self) -> None:
+        """Register a listener on coordinator updates after being added to HA."""
+        await super().async_added_to_hass()
+        self._coordinator.async_add_listener(self._on_coordinator_update)
+
+    @callback
+    def _on_coordinator_update(self) -> None:
+        """Handle coordinator data refresh — find our door and update state."""
+        door_data = self._coordinator.data
+        if door_data and self._door.id in door_data:
+            self._update_from_door(door_data[self._door.id])
+
     @callback
     def _update_from_door(self, door: DoorElement) -> None:
         """Update state and attributes from a refreshed DoorElement."""
@@ -111,10 +123,6 @@ class DoorLockEntity(LockEntity):
         return None
 
 
-# Store added entity IDs to avoid duplicates
-_added_entity_ids: set[str] = set()
-
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -124,20 +132,28 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator = data["coordinator"]
 
+    # Add entities for doors already discovered (first setup)
+    doors = coordinator.data or {}
+    selected_doors = entry.options.get("selected_doors") if entry.options else None
+    entities = [
+        DoorLockEntity(door, coordinator, entry)
+        for door in doors.values()
+        if selected_doors is None or door.id in selected_doors
+    ]
+    if entities:
+        async_add_entities(entities)
+
+    # New doors discovered on later refreshes — add them too
     @callback
-    def _on_update(doors: dict[str, DoorElement]) -> None:
-        entities = []
-        for door_id, door in doors.items():
-            unique_id = f"{DOMAIN}.lock.{door_id}"
-            if unique_id not in _added_entity_ids:
-                _added_entity_ids.add(unique_id)
-                entities.append(DoorLockEntity(door, coordinator, entry))
+    def _on_coordinator_update() -> None:
+        doors = coordinator.data or {}
+        selected_doors = entry.options.get("selected_doors") if entry.options else None
+        entities = [
+            DoorLockEntity(door, coordinator, entry)
+            for door in doors.values()
+            if selected_doors is None or door.id in selected_doors
+        ]
         if entities:
             async_add_entities(entities)
 
-    # Register the callback on the coordinator
-    coordinator.async_on_available_callbacks.add(_on_update)
-
-    # Add entities for doors already discovered
-    if coordinator.data:
-        _on_update(coordinator.data)
+    coordinator.async_add_listener(_on_coordinator_update)

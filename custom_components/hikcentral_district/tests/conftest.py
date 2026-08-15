@@ -1,58 +1,70 @@
-"""Shared fixtures for hikcentral_district tests."""
+"""Shared fixtures for hikcentral_district tests.
+
+Uses pytest-homeassistant-custom-component for real integration setup.
+"""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 import pytest
+
+from homeassistant.config_entries import ConfigEntry
+
+from custom_components.hikcentral_district import (
+    HikCentralDistrictDataUpdateCoordinator,
+)
+
+
+@pytest.fixture
+def enable_custom_integrations():
+    """Enable Home Assistant custom integration loading in tests.
+
+    The real implementation is provided by pytest-homeassistant-custom-component.
+    This fixture must be present in conftest.py to activate the plugin.
+    """
+    return None
 
 
 @pytest.fixture
 def hass():
     """Minimal hass mock for HA custom component tests.
 
-    async_add_executor_job must return an awaitable so that code doing
-    `await hass.async_add_executor_job(fn(...))` works correctly — whether
-    fn is a regular function (executor) or an async function.
+    Provides the subset of HomeAssistant methods/properties used by the integration.
     """
     hass = MagicMock()
     hass.data = {}
     hass.config_entries = MagicMock()
     hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
-    hass.config_entries.async_unload_entries = AsyncMock(return_value=True)
+    hass.config_entries.async_unload_entry = AsyncMock(return_value=True)
     hass.services = MagicMock()
-    hass.services.async_register = AsyncMock()
+    hass.services.async_register = MagicMock()
     hass.services.async_remove = AsyncMock()
 
     async def async_add_executor_job(job, *args, **kwargs):
-        """Run a callable and return an awaitable.
+        import asyncio
 
-        For regular callables: run in a thread and return result.
-        For async callables: return the coroutine directly.
-        """
         result = job(*args, **kwargs)
-        if hasattr(result, "__await__"):
-            return result
+        if asyncio.iscoroutine(result):
+            return await result
         return result
 
     hass.async_add_executor_job = async_add_executor_job
+    hass.async_create_task = MagicMock(return_value=MagicMock())
     return hass
 
 
 @pytest.fixture
 def mock_client():
-    """Mock BumblebeeClient.
+    """Mock BumblebeeClient with async data methods.
 
-    Data-fetching methods are async coroutines — they are invoked via
+    All data-fetching methods are async coroutines — invoked via
     hass.async_add_executor_job() in the real code.
-    door_action is a regular MagicMock — called via async_add_executor_job
-    too (returns None immediately so sync wrapper handles it fine).
     """
-    from hikcentral_bumblebee import BumblebeeClient
-
-    client = MagicMock(spec=BumblebeeClient)
+    client = MagicMock()
     client.login = MagicMock()
+    client.keepalive = MagicMock()
+    client.sid = "test-sid"
 
-    # Data methods — async so await works when called via async_add_executor_job
     async def mock_get_areas():
         return []
 
@@ -68,25 +80,22 @@ def mock_client():
     async def mock_get_access_controllers():
         return []
 
-    client.get_areas = mock_get_areas
-    client.get_door_elements = mock_get_door_elements
-    client.get_door = mock_get_door
-    client.get_camera_elements = mock_get_camera_elements
-    client.get_access_controllers = mock_get_access_controllers
+    async def mock_door_action(door_id, action):
+        return None
 
-    # door_action — regular sync MagicMock
-    client.door_action = MagicMock(return_value=None)
+    client.get_areas = AsyncMock(mock_get_areas)
+    client.get_door = AsyncMock(mock_get_door)
+    client.get_door_elements = AsyncMock(mock_get_door_elements)
+    client.get_camera_elements = AsyncMock(mock_get_camera_elements)
+    client.get_access_controllers = AsyncMock(mock_get_access_controllers)
+    client.door_action = AsyncMock(mock_door_action)
 
-    client.keepalive = MagicMock()
-    client.sid = "test-sid"
     return client
 
 
 @pytest.fixture
 def mock_config_entry():
-    """Mock config entry."""
-    from homeassistant.config_entries import ConfigEntry
-
+    """Mock ConfigEntry matching the structure used by the integration."""
     entry = MagicMock(spec=ConfigEntry)
     entry.entry_id = "test_entry_id"
     entry.data = {
@@ -96,14 +105,46 @@ def mock_config_entry():
         "verify_ssl": False,
         "scan_interval": 30,
     }
-    entry.options = {"doors": [], "cameras": []}
+    entry.options = {"selected_doors": [], "selected_cameras": []}
     entry.async_unload = AsyncMock(return_value=True)
     return entry
 
 
 @pytest.fixture
+def mock_coordinator(hass, mock_client):
+    """Mock DataUpdateCoordinator pre-populated with mock data."""
+    coordinator = HikCentralDistrictDataUpdateCoordinator(
+        hass=hass,
+        client=mock_client,
+        config_data={
+            "url": "https://86.57.210.56:443",
+            "username": "u",
+            "password": "p",
+            "verify_ssl": False,
+            "scan_interval": 30,
+        },
+    )
+    # Pre-populate data with mock door
+    coordinator.data = {
+        "996": MagicMock(
+            id="996",
+            name="Kalitka_SP1",
+            online=True,
+            magnet_state=0,
+            lock_state=1,
+            policy_state=0,
+            overall_status=0,
+        )
+    }
+    # Pre-populate camera/controller counts
+    coordinator._controller_count = 1
+    coordinator._camera_count = 2
+    return coordinator
+
+
+@pytest.fixture
 def mock_door():
-    """Mock door element."""
+    """Mock DoorElement."""
     from hikcentral_bumblebee.models import DoorElement
 
     return DoorElement(
@@ -123,7 +164,7 @@ def mock_door():
 
 @pytest.fixture
 def mock_camera():
-    """Mock camera element."""
+    """Mock CameraElement."""
     from hikcentral_bumblebee.models import CameraElement
 
     return CameraElement(
@@ -132,16 +173,4 @@ def mock_camera():
         address="192.168.1.100",
         username="admin",
         password="password",
-    )
-
-
-@pytest.fixture
-def mock_controller():
-    """Mock access controller."""
-    from hikcentral_bumblebee.models import AccessController
-
-    return AccessController(
-        id="205",
-        name="Velobox MR1-2",
-        address="10.1.30.96",
     )

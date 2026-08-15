@@ -1,47 +1,71 @@
-"""Test sensor.py — HikSystemSensor for diagnostics."""
+"""Test sensor.py — HikSystemSensor diagnostics (no network calls in properties)."""
+
+import pytest
+from unittest.mock import MagicMock
 
 
 class TestHikSystemSensor:
-    """Test HikSystemSensor device counts."""
+    """Test HikSystemSensor reads from coordinator without network calls."""
 
-    def test_online_controllers_count_filtered_by_online(self):
-        """Test online controllers are filtered by BaseInfo.Online."""
-        from hikcentral_bumblebee.models import AccessController
+    @pytest.fixture
+    def entity(self, mock_coordinator):
+        """Create a HikSystemSensor entity."""
+        from hikcentral_district.sensor import HikSystemSensor
 
-        controllers = [
-            AccessController(id="1", name="Ctrl 1", address="10.0.0.1"),
-            AccessController(id="2", name="Ctrl 2", address="10.0.0.2"),
-        ]
-        # Mock online state via a test approach
-        online_count = sum(1 for c in controllers)
-        assert online_count == 2
+        entry = MagicMock()
+        entry.entry_id = "test_entry"
+        entry.options = {}
+        return HikSystemSensor(mock_coordinator, entry)
 
-    def test_total_doors_count(self):
-        """Test total doors count from door elements."""
-        from hikcentral_bumblebee.models import DoorElement
+    def test_native_value_is_online_controller_count(self, entity, mock_coordinator):
+        """native_value returns online controller count from coordinator."""
+        mock_coordinator._controller_count = 3
+        assert entity.native_value == 3
 
-        doors = [
-            DoorElement(id="996", name="Kalitka_SP1", online=True),
-            DoorElement(id="997", name="Kalitka_SP17", online=True),
-            DoorElement(id="998", name="Kalitka_SP21", online=False),
-        ]
-        assert len(doors) == 3
-        online_doors = sum(1 for d in doors if d.online)
-        assert online_doors == 2
+    def test_extra_state_attributes_from_coordinator(self, entity, mock_coordinator):
+        """extra_state_attributes reads from coordinator without network calls."""
+        mock_coordinator._controller_count = 2
+        mock_coordinator._camera_count = 5
+        mock_coordinator.data = {
+            "d1": MagicMock(),
+            "d2": MagicMock(),
+            "d3": MagicMock(),
+        }
 
-    def test_total_cameras_count(self):
-        """Test total cameras count from camera elements."""
-        from hikcentral_bumblebee.models import CameraElement
+        attrs = entity.extra_state_attributes
+        assert attrs["online_controllers"] == 2
+        assert attrs["total_doors"] == 3
+        assert attrs["total_cameras"] == 5
 
-        cameras = [
-            CameraElement(id="1", name="Camera 1", address="10.0.0.1"),
-            CameraElement(id="2", name="Camera 2", address="10.0.0.2"),
-        ]
-        assert len(cameras) == 2
+    def test_no_network_calls_in_native_value(self, mock_coordinator):
+        """native_value does not call any client methods."""
+        from hikcentral_district.sensor import HikSystemSensor
 
-    def test_door_status_attributes_exposed(self, mock_door):
-        """Test all door status attributes are available."""
-        assert hasattr(mock_door, "magnet_state")
-        assert hasattr(mock_door, "lock_state")
-        assert hasattr(mock_door, "policy_state")
-        assert hasattr(mock_door, "overall_status")
+        entry = MagicMock()
+        entry.entry_id = "test"
+        entry.options = {}
+        entity = HikSystemSensor(mock_coordinator, entry)
+
+        mock_coordinator.client.get_access_controllers.reset_mock()
+        _ = entity.native_value
+        mock_coordinator.client.get_access_controllers.assert_not_called()
+
+    def test_no_network_calls_in_extra_state_attributes(self, mock_coordinator):
+        """extra_state_attributes does not call any client methods."""
+        from hikcentral_district.sensor import HikSystemSensor
+
+        entry = MagicMock()
+        entry.entry_id = "test"
+        entry.options = {}
+        entity = HikSystemSensor(mock_coordinator, entry)
+
+        mock_coordinator.client.get_camera_elements.reset_mock()
+        mock_coordinator.client.get_access_controllers.reset_mock()
+        _ = entity.extra_state_attributes
+        mock_coordinator.client.get_camera_elements.assert_not_called()
+        mock_coordinator.client.get_access_controllers.assert_not_called()
+
+    def test_unique_id_and_name(self, entity):
+        """unique_id and name are set correctly."""
+        assert entity.unique_id == "hikcentral_district.system"
+        assert entity.name == "HikCentral System"

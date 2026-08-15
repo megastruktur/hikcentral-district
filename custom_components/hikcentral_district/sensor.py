@@ -17,9 +17,11 @@ class HikSystemSensor(SensorEntity):
     """HA Sensor for HikCentral system diagnostics.
 
     Exposes:
-      - online_controllers: count of controllers with BaseInfo.Online == True
+      - online_controllers: count of online controllers
       - total_doors: total discovered doors
       - total_cameras: total discovered cameras
+
+    All values come from the coordinator's last refresh — no network calls.
     """
 
     def __init__(
@@ -45,48 +47,18 @@ class HikSystemSensor(SensorEntity):
 
     @property
     def native_value(self) -> int:
-        """Return total online controllers as primary value."""
-        controllers = []
-        try:
-            controllers = self._coordinator.hass.async_add_executor_job(
-                self._coordinator.client.get_access_controllers
-            )
-        except Exception:
-            pass
-        return sum(1 for c in controllers if c.online)
+        """Return count of online controllers as primary value."""
+        return self._coordinator.controller_count
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return diagnostic attributes."""
+        """Return diagnostic attributes from coordinator data."""
         doors_count = len(self._coordinator.data) if self._coordinator.data else 0
-        cameras_count = 0
-        try:
-            cameras = self._coordinator.hass.async_add_executor_job(
-                self._coordinator.client.get_camera_elements
-            )
-            cameras_count = len(cameras)
-        except Exception:
-            pass
-
-        controllers = []
-        try:
-            controllers = self._coordinator.hass.async_add_executor_job(
-                self._coordinator.client.get_access_controllers
-            )
-        except Exception:
-            pass
-        online_controllers = sum(1 for c in controllers if c.online)
-
         return {
-            "online_controllers": online_controllers,
-            "total_controllers": len(controllers),
+            "online_controllers": self._coordinator.controller_count,
             "total_doors": doors_count,
-            "total_cameras": cameras_count,
+            "total_cameras": self._coordinator.camera_count,
         }
-
-
-# Only add one system sensor per entry
-_added_system_sensor: set[str] = set()
 
 
 async def async_setup_entry(
@@ -98,7 +70,4 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator = data["coordinator"]
 
-    unique_id = f"{DOMAIN}.system"
-    if unique_id not in _added_system_sensor:
-        _added_system_sensor.add(unique_id)
-        async_add_entities([HikSystemSensor(coordinator, entry)])
+    async_add_entities([HikSystemSensor(coordinator, entry)])

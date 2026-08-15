@@ -105,3 +105,14 @@ class TestHikCentralDistrictConfigFlow:
 
             assert result["type"] == "form"
             assert result["errors"]["base"] == "invalid_credentials"
+
+    async def test_async_get_options_flow_returns_handler(self, mock_config_entry):
+        """async_get_options_flow returns HikCentralDistrictOptionsFlow instance."""
+        from hikcentral_district.config_flow import HikCentralDistrictConfigFlow
+
+        flow_cls = HikCentralDistrictConfigFlow
+        result = flow_cls.async_get_options_flow(mock_config_entry)
+        # Should return an OptionsFlow instance, not a class
+        assert result is not None
+        # The returned object should be the options flow for this config entry
+        assert hasattr(result, "async_step_init")

@@ -1,0 +1,7 @@
+{
+  "name": "HikCentral District",
+  "country": ["UA", "US"],
+  "hacs": "https://github.com/hacs/integration",
+  "content_in_root": false,
+  "zip_release": false
+}

@@ -14,10 +14,6 @@ from hikcentral_bumblebee import DoorElement
 from .const import DOMAIN
 
 
-# Track added entity IDs to avoid duplicates
-_added_sensor_ids: set[str] = set()
-
-
 class HikDoorBinarySensor(BinarySensorEntity):
     """HA BinarySensor for door contact (magnet state) and online status.
 
@@ -53,6 +49,18 @@ class HikDoorBinarySensor(BinarySensorEntity):
             "online": door.online,
         }
 
+    async def async_added_to_hass(self) -> None:
+        """Register a listener on coordinator updates after being added to HA."""
+        await super().async_added_to_hass()
+        self._coordinator.async_add_listener(self._on_coordinator_update)
+
+    @callback
+    def _on_coordinator_update(self) -> None:
+        """Handle coordinator data refresh — find our door and update state."""
+        door_data = self._coordinator.data
+        if door_data and self._door.id in door_data:
+            self._update_from_door(door_data[self._door.id])
+
     @callback
     def _update_from_door(self, door: DoorElement) -> None:
         self._door = door
@@ -85,21 +93,32 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator = data["coordinator"]
 
+    # Add entities for doors already discovered (first setup)
+    doors = coordinator.data or {}
+    selected_doors = entry.options.get("selected_doors") if entry.options else None
+    entities = []
+    for door in doors.values():
+        if selected_doors is not None and door.id not in selected_doors:
+            continue
+        for sensor_type in ("door_contact", "online"):
+            entities.append(HikDoorBinarySensor(door, sensor_type, coordinator, entry))
+    if entities:
+        async_add_entities(entities)
+
+    # New doors discovered on later refreshes — add them too
     @callback
-    def _on_update(doors: dict[str, DoorElement]) -> None:
+    def _on_coordinator_update() -> None:
+        doors = coordinator.data or {}
+        selected_doors = entry.options.get("selected_doors") if entry.options else None
         entities = []
-        for door_id, door in doors.items():
+        for door in doors.values():
+            if selected_doors is not None and door.id not in selected_doors:
+                continue
             for sensor_type in ("door_contact", "online"):
-                unique_id = f"{DOMAIN}.binary_sensor.{door_id}.{sensor_type}"
-                if unique_id not in _added_sensor_ids:
-                    _added_sensor_ids.add(unique_id)
-                    entities.append(
-                        HikDoorBinarySensor(door, sensor_type, coordinator, entry)
-                    )
+                entities.append(
+                    HikDoorBinarySensor(door, sensor_type, coordinator, entry)
+                )
         if entities:
             async_add_entities(entities)
 
-    coordinator.async_on_available_callbacks.add(_on_update)
-
-    if coordinator.data:
-        _on_update(coordinator.data)
+    coordinator.async_add_listener(_on_coordinator_update)
