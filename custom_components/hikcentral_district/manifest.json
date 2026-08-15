@@ -1,11 +1,15 @@
 {
   "domain": "hikcentral_district",
   "name": "HikCentral District",
-  "codeowners": ["@megastruktur"],
+  "codeowners": [
+    "@megastruktur"
+  ],
   "config_flow": true,
   "documentation": "https://github.com/megastruktur/hikcentral-district",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/megastruktur/hikcentral-district/issues",
-  "requirements": ["hikcentral_bumblebee@git+https://github.com/megastruktur/hikcentral-bumblebee@master"],
+  "requirements": [
+    "hikcentral_bumblebee@git+https://github.com/megastruktur/hikcentral-bumblebee@main"
+  ],
   "version": "0.1.0"
 }
