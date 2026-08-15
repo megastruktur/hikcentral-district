@@ -1,4 +1,4 @@
-hikcentral_district/door_action:
+door_action:
   description: Send an action to a HikCentral door.
   fields:
     door_id:
@@ -8,12 +8,9 @@ hikcentral_district/door_action:
       selector:
         text:
     action:
-      description: >
+      description: >-
         The action to perform on the door:
-        1 = unlock/open,
-        2 = lock,
-        3 = remain unlocked,
-        4 = remain locked.
+        1 = unlock/open, 2 = lock, 3 = remain unlocked, 4 = remain locked.
       example: 1
       required: true
       selector:

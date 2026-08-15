@@ -148,17 +148,24 @@ async def async_setup_entry(
     if entities:
         async_add_entities(entities)
 
-    # New doors discovered on later refreshes — add them too
+    # New doors discovered on later refreshes — add them, but never re-add
+    # an entity_id that already exists (HA ignores duplicates and logs an error).
+    known_ids: set = {e.unique_id for e in entities}
+
     @callback
     def _on_coordinator_update() -> None:
         doors = coordinator.data or {}
-        selected_doors = entry.options.get("selected_doors") if entry.options else None
-        entities = [
-            DoorLockEntity(door, coordinator, entry)
-            for door in doors.values()
-            if selected_doors is None or door.id in selected_doors
-        ]
-        if entities:
-            async_add_entities(entities)
+        selected = entry.options.get("selected_doors") if entry.options else None
+        new_entities = []
+        for door in doors.values():
+            if selected is not None and door.id not in selected:
+                continue
+            uid = f"{DOMAIN}.lock.{door.id}"
+            if uid in known_ids:
+                continue
+            known_ids.add(uid)
+            new_entities.append(DoorLockEntity(door, coordinator, entry))
+        if new_entities:
+            async_add_entities(new_entities)
 
     coordinator.async_add_listener(_on_coordinator_update)

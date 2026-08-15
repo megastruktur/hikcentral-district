@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import uuid
 from typing import Any
 
 from homeassistant.components.camera import Camera
@@ -67,7 +68,7 @@ class HikDoorCamera(Camera):
         if not rtsp:
             return None
 
-        tmp_path = f"/tmp/hikcam_snapshot_{self._camera.id}.jpg"
+        tmp_path = f"/tmp/hikcam_snapshot_{self._camera.id}_{uuid.uuid4().hex[:8]}.jpg"
 
         cmd = [
             "ffmpeg",
