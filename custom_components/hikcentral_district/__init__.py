@@ -22,7 +22,7 @@ from homeassistant.helpers.update_coordinator import (
 
 from hikcentral_bumblebee import BumblebeeClient, DoorElement
 
-from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, PLATFORMS
+from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, EXTRA_DOOR_IDS, PLATFORMS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,8 +44,10 @@ class HikCentralDistrictDataUpdateCoordinator(DataUpdateCoordinator[dict[str, An
     """DataUpdateCoordinator for HikCentral District.
 
     Poll interval is configurable via scan_interval option.
-    On each poll: fetch all door elements + per-door status.
-    Also updates camera and controller counts in-place.
+    On each poll: discover doors via the DoorElements list call, fetch
+    per-door status, and merge the hardcoded EXTRA_DOOR_IDS (fetched
+    directly by ID, deduped by ID). Also updates camera and controller
+    counts in-place.
     """
 
     def __init__(
@@ -81,6 +83,11 @@ class HikCentralDistrictDataUpdateCoordinator(DataUpdateCoordinator[dict[str, An
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch all door statuses and system counts from HikCentral.
 
+        Doors are discovered via the DoorElements list call; additionally,
+        the hardcoded EXTRA_DOOR_IDS are fetched directly by ID and merged
+        into the result (dedup by ID). A failed extra-door fetch is logged
+        and skipped — it never breaks the whole update.
+
         Returns:
             dict keyed by door id, value is DoorElement with full status.
             Camera and controller counts are stored as coordinator attributes.
@@ -95,6 +102,23 @@ class HikCentralDistrictDataUpdateCoordinator(DataUpdateCoordinator[dict[str, An
                     self.client.get_door, door.id
                 )
                 result[door.id] = full_door
+
+            # Merge extra door IDs that the list call does not return but that
+            # exist on this district's server (direct GET by ID works).
+            for extra_id in EXTRA_DOOR_IDS:
+                key = str(extra_id)
+                if key in result:
+                    continue
+                try:
+                    extra_door = await self.hass.async_add_executor_job(
+                        self.client.get_door, key
+                    )
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "Failed to fetch extra door %s: %s", extra_id, err
+                    )
+                    continue
+                result[key] = extra_door
 
             controllers = await self.hass.async_add_executor_job(
                 self.client.get_access_controllers

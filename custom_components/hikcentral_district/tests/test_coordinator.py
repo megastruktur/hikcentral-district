@@ -61,6 +61,118 @@ class TestHikCentralDistrictCoordinator:
         assert coordinator.camera_count == 3
 
 
+class TestExtraDoorIds:
+    """Test merging of hardcoded EXTRA_DOOR_IDS into coordinator data.
+
+    EXTRA_DOOR_IDS = [999, 1002, 1007, 536, 538] — doors that exist on the
+    district's HikCentral server but are absent from the DoorElements list
+    response. They are fetched directly by ID and merged (dedup by ID).
+    """
+
+    @staticmethod
+    def _make_door(door_id):
+        from hikcentral_bumblebee.models import DoorElement
+
+        return DoorElement(
+            id=str(door_id),
+            name=f"Door {door_id}",
+            online=True,
+            lock_state=0,
+        )
+
+    def _make_client(self, listed_ids, get_door_side_effect):
+        from hikcentral_bumblebee import BumblebeeClient
+
+        client = MagicMock(spec=BumblebeeClient)
+        client.get_door_elements.return_value = [
+            self._make_door(door_id) for door_id in listed_ids
+        ]
+        client.get_door.side_effect = get_door_side_effect
+        client.get_access_controllers.return_value = []
+        client.get_camera_elements.return_value = []
+        return client
+
+    async def test_extra_door_ids_merged_when_absent_from_list(
+        self, hass, mock_config_entry
+    ):
+        """Extra door IDs are fetched directly and merged when not in the list."""
+        client = self._make_client(
+            listed_ids=["996"],
+            get_door_side_effect=lambda door_id: self._make_door(door_id),
+        )
+
+        from hikcentral_district import HikCentralDistrictDataUpdateCoordinator
+
+        coordinator = HikCentralDistrictDataUpdateCoordinator(
+            hass=hass,
+            client=client,
+            entry=mock_config_entry,
+        )
+
+        result = await coordinator._async_update_data()
+
+        assert set(result.keys()) == {"996", "999", "1002", "1007", "536", "538"}
+        for extra_id in ("999", "1002", "1007", "536", "538"):
+            assert result[extra_id].id == extra_id
+
+    async def test_extra_door_ids_deduped_when_in_list(
+        self, hass, mock_config_entry
+    ):
+        """A door present in both the list and EXTRA_DOOR_IDS is fetched once."""
+        client = self._make_client(
+            listed_ids=["996", "999"],
+            get_door_side_effect=lambda door_id: self._make_door(door_id),
+        )
+
+        from hikcentral_district import HikCentralDistrictDataUpdateCoordinator
+
+        coordinator = HikCentralDistrictDataUpdateCoordinator(
+            hass=hass,
+            client=client,
+            entry=mock_config_entry,
+        )
+
+        result = await coordinator._async_update_data()
+
+        # exactly one "999" entry in the result
+        assert "999" in result
+        # 2 listed (996, 999) + 4 remaining extras (1002, 1007, 536, 538) = 6
+        assert client.get_door.call_count == 6
+        calls_with_999 = [
+            c for c in client.get_door.call_args_list if c.args[0] == "999"
+        ]
+        assert len(calls_with_999) == 1
+
+    async def test_extra_door_failure_does_not_break_update(
+        self, hass, mock_config_entry
+    ):
+        """A failing extra-door fetch is skipped without breaking the update."""
+
+        def get_door_side_effect(door_id):
+            if str(door_id) == "1007":
+                raise Exception("door 1007 unreachable")
+            return self._make_door(door_id)
+
+        client = self._make_client(
+            listed_ids=["996"],
+            get_door_side_effect=get_door_side_effect,
+        )
+
+        from hikcentral_district import HikCentralDistrictDataUpdateCoordinator
+
+        coordinator = HikCentralDistrictDataUpdateCoordinator(
+            hass=hass,
+            client=client,
+            entry=mock_config_entry,
+        )
+
+        result = await coordinator._async_update_data()
+
+        # listed 996 + extras 999, 1002, 536, 538 (1007 failed) = 5 keys
+        assert set(result.keys()) == {"996", "999", "1002", "536", "538"}
+        assert "1007" not in result
+
+
 class TestHikCentralDistrictServices:
     """Test service registration."""
 

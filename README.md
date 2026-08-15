@@ -54,15 +54,54 @@ Copy `custom_components/hikcentral_district/` into your Home Assistant's
 | Selected Doors | Multi-select which doors to create entities for |
 | Selected Cameras | Multi-select which cameras to create entities for |
 
+## Door Discovery
+
+On every poll cycle the coordinator discovers doors in two ways and merges them
+(deduplicated by door ID):
+
+1. **List discovery** — `POST /ISAPI/Bumblebee/ACS/DoorElements` enumerates the
+   doors visible to the account; full per-door status is then fetched for each.
+2. **Extra door IDs** — the hardcoded `EXTRA_DOOR_IDS` (in `const.py`) are
+   fetched directly by ID and merged into the result.
+
+The extra IDs exist because these doors are present on this district's
+HikCentral server, but the account's list call does **not** return them. A
+direct `GET /ISAPI/Bumblebee/ACS/DoorElements/{id}` still works for each
+(verified live 2026-08-15):
+
+| Extra Door ID | Name |
+|---|---|
+| 999 | Vyezd2.1 (barrier) |
+| 1002 | Vyezd2.2 (barrier) |
+| 1007 | Kalitka_MR1-2 |
+| 536 | дверь_MR5 P2A |
+| 538 | дверь_MR5 P2B |
+
+These IDs are intentionally hardcoded — this repository is district-specific,
+and they are deliberately **not** a config-flow option. A failed fetch of an
+extra door is logged as a warning and skipped; it never breaks the update cycle.
+
 ## Entity Types
 
 | Platform | Entity | Description |
 |---|---|---|
-| `lock` | `Door Lock (<name>)` | Lock control per door. State from `DoorStatus.LockState` (0=unlocked, 1=locked, 2+=blocked). Services: lock, unlock, open |
+| `lock` | `Door Lock (<name>)` | Lock control per door. State from `DoorStatus.LockState` (0=locked, 1=unlocked, other=unknown). Services: lock, unlock, open |
 | `binary_sensor` | `<name> Door Contact` | Door contact magnet state (0=closed=off, 1=open=on) |
 | `binary_sensor` | `<name> Online` | Door online/offline status |
 | `camera` | `<name>` | RTSP camera stream from NVR |
 | `sensor` | `HikCentral System` | Online controller count, total doors/cameras |
+
+## Door Status Semantics
+
+Each door reports a `DoorStatus` block; the fields below are also exposed as
+state attributes on the lock entity:
+
+| Field | Meaning |
+|---|---|
+| `MagnetState` | Door-contact magnet state (0=closed, 1=open) |
+| `LockState` | 0 = locked, 1 = unlocked (any other value → unknown) |
+| `PolicyState` | Access-policy state reported by the controller |
+| `OverallStatus` | Aggregate door status reported by the controller |
 
 ## Services
 
@@ -76,6 +115,25 @@ data:
   door_id: "996"   # Door element ID
   action: 1        # 1=unlock/open, 2=lock, 3=remain unlocked, 4=remain locked
 ```
+
+## Door Actions
+
+Door control is sent as a raw HTTP PUT:
+
+```
+PUT /ISAPI/Bumblebee/ACS/DoorElements/{DoorID}/DoorAction?SID=<sid>
+```
+
+| Action | Meaning |
+|---|---|
+| 1 | Open / unlock |
+| 2 | Lock |
+| 3 | Remain unlocked |
+| 4 | Remain locked |
+
+These actions are exposed both through the lock entities (`open`, `lock`,
+`unlock` — where `open` and `unlock` both send action 1) and through the
+`hikcentral_district.door_action` service.
 
 ## Protocol Notes
 
