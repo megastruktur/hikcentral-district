@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import MagicMock
 
-from homeassistant.const import STATE_LOCKED, STATE_UNLOCKED, STATE_UNAVAILABLE
+from custom_components.hikcentral_district.lock import STATE_LOCKED, STATE_UNAVAILABLE, STATE_UNLOCKED
 
 
 class TestDoorLockEntityState:

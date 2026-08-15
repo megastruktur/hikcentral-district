@@ -6,9 +6,14 @@ from typing import Any
 
 from homeassistant.components.lock import LockEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_LOCKED, STATE_UNLOCKED, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+# STATE_LOCKED/STATE_UNLOCKED/STATE_UNAVAILABLE were removed from homeassistant.const
+# in HA 2024.x — define locally to stay compatible with new and old cores.
+STATE_LOCKED = "locked"
+STATE_UNLOCKED = "unlocked"
+STATE_UNAVAILABLE = "unavailable"
 
 from hikcentral_bumblebee import DoorElement
 
