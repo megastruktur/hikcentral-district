@@ -4,151 +4,152 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.lock import LockEntity
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.components.lock import LockEntity, LockEntityFeature
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-
-# STATE_LOCKED/STATE_UNLOCKED/STATE_UNAVAILABLE were removed from homeassistant.const
-# in HA 2024.x — define locally to stay compatible with new and old cores.
-STATE_LOCKED = "locked"
-STATE_UNLOCKED = "unlocked"
-STATE_UNAVAILABLE = "unavailable"
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from hikcentral_bumblebee import DoorElement
 
+from . import HikCentralDistrictConfigEntry, HikCentralDistrictDataUpdateCoordinator
 from .const import DOMAIN
 
 
-class DoorLockEntity(LockEntity):
+class DoorLockEntity(
+    CoordinatorEntity[HikCentralDistrictDataUpdateCoordinator], LockEntity
+):
     """HA Lock entity wrapping a HikCentral door element.
 
-    Maps LockState:
-      0 = unlocked  → STATE_UNLOCKED
-      1 = locked    → STATE_LOCKED
-      2 = blocked  → STATE_UNAVAILABLE
-      3+ = unknown → STATE_UNAVAILABLE
+    Maps lock_state:
+      0 = unlocked → is_locked False
+      1 = locked   → is_locked True
+      other        → is_locked None (state derives to unknown)
+
+    State itself is derived by the LockEntity base class from is_locked
+    (the base `state` property is @final and must not be overridden).
     """
+
+    _attr_has_entity_name = True
+    _attr_name = None  # lock is the device's main feature → device name
+    _attr_supported_features = LockEntityFeature.OPEN
 
     def __init__(
         self,
         door: DoorElement,
-        coordinator: Any,
-        entry: ConfigEntry,
+        coordinator: HikCentralDistrictDataUpdateCoordinator,
     ) -> None:
+        """Initialize the lock entity."""
+        super().__init__(coordinator)
+        self._door_id = door.id
         self._door = door
-        self._coordinator = coordinator
-        self._entry = entry
         self._attr_unique_id = f"{DOMAIN}.lock.{door.id}"
-        self._attr_name = f"Door Lock ({door.name})"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, door.id)},
-            "name": door.name,
-            "manufacturer": "HikCentral",
-            "model": "Door Element",
-        }
-        self._attr_extra_state_attributes = {
-            "magnet_state": door.magnet_state,
-            "lock_state": door.lock_state,
-            "policy_state": door.policy_state,
-            "overall_status": door.overall_status,
-        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, door.id)},
+            name=door.name,
+            manufacturer="HikCentral",
+            model="Door Element",
+        )
 
-    async def async_added_to_hass(self) -> None:
-        """Register a listener on coordinator updates after being added to HA."""
-        await super().async_added_to_hass()
-        self._coordinator.async_add_listener(self._on_coordinator_update)
+    @property
+    def _door_data(self) -> DoorElement | None:
+        """Return the latest door data from the coordinator, if present."""
+        data = self.coordinator.data
+        if data and self._door_id in data:
+            return data[self._door_id]
+        return None
 
     @callback
-    def _on_coordinator_update(self) -> None:
-        """Handle coordinator data refresh — find our door and update state."""
-        door_data = self._coordinator.data
-        if door_data and self._door.id in door_data:
-            self._update_from_door(door_data[self._door.id])
-
-    @callback
-    def _update_from_door(self, door: DoorElement) -> None:
-        """Update state and attributes from a refreshed DoorElement."""
-        self._door = door
-        self._attr_extra_state_attributes = {
-            "magnet_state": door.magnet_state,
-            "lock_state": door.lock_state,
-            "policy_state": door.policy_state,
-            "overall_status": door.overall_status,
-        }
+    def _handle_coordinator_update(self) -> None:
+        """Handle coordinator data refresh — cache our door and write state."""
+        door = self._door_data
+        if door is not None:
+            self._door = door
         self.async_write_ha_state()
+
+    @property
+    def available(self) -> bool:
+        """Return True if the coordinator is healthy and the door is online."""
+        if not super().available:
+            return False
+        door = self._door_data
+        if door is None:
+            # Door missing from latest data — keep last known availability.
+            return True
+        return bool(door.online)
+
+    @property
+    def is_locked(self) -> bool | None:
+        """Return True if locked, False if unlocked, None if unknown."""
+        lock_state = self._door.lock_state
+        if lock_state == 1:
+            return True
+        if lock_state == 0:
+            return False
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return door status attributes from the last known door data."""
+        door = self._door
+        return {
+            "magnet_state": door.magnet_state,
+            "lock_state": door.lock_state,
+            "policy_state": door.policy_state,
+            "overall_status": door.overall_status,
+        }
 
     async def async_open(self, **kwargs: Any) -> None:
         """Open/unlock the door — action 1."""
-        await self._coordinator.hass.async_add_executor_job(
-            self._coordinator.client.door_action, self._door.id, 1
+        await self.coordinator.hass.async_add_executor_job(
+            self.coordinator.client.door_action, self._door_id, 1
         )
 
     async def async_lock(self, **kwargs: Any) -> None:
         """Lock the door — action 2."""
-        await self._coordinator.hass.async_add_executor_job(
-            self._coordinator.client.door_action, self._door.id, 2
+        await self.coordinator.hass.async_add_executor_job(
+            self.coordinator.client.door_action, self._door_id, 2
         )
 
     async def async_unlock(self, **kwargs: Any) -> None:
         """Unlock the door — action 1 (same as open)."""
-        await self._coordinator.hass.async_add_executor_job(
-            self._coordinator.client.door_action, self._door.id, 1
+        await self.coordinator.hass.async_add_executor_job(
+            self.coordinator.client.door_action, self._door_id, 1
         )
 
-    def _remain_unlocked(self) -> None:
+    async def _remain_unlocked(self) -> None:
         """Set door to remain unlocked — action 3."""
-        self._coordinator.hass.async_add_executor_job(
-            self._coordinator.client.door_action, self._door.id, 3
+        await self.coordinator.hass.async_add_executor_job(
+            self.coordinator.client.door_action, self._door_id, 3
         )
 
-    def _remain_locked(self) -> None:
+    async def _remain_locked(self) -> None:
         """Set door to remain locked — action 4."""
-        self._coordinator.hass.async_add_executor_job(
-            self._coordinator.client.door_action, self._door.id, 4
+        await self.coordinator.hass.async_add_executor_job(
+            self.coordinator.client.door_action, self._door_id, 4
         )
-
-    @property
-    def state(self) -> str | None:
-        """Return HA lock state from door lock_state."""
-        ls = self._door.lock_state
-        if ls == 0:
-            return STATE_UNLOCKED
-        if ls == 1:
-            return STATE_LOCKED
-        return STATE_UNAVAILABLE
-
-    @property
-    def is_locked(self) -> bool | None:
-        """Return True if locked."""
-        if self._door.lock_state == 1:
-            return True
-        if self._door.lock_state == 0:
-            return False
-        return None
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: HikCentralDistrictConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up lock entities for all discovered doors."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator = data["coordinator"]
+    coordinator = entry.runtime_data
 
     # Add entities for doors already discovered (first setup)
     doors = coordinator.data or {}
     selected_doors = entry.options.get("selected_doors") if entry.options else None
     entities = [
-        DoorLockEntity(door, coordinator, entry)
+        DoorLockEntity(door, coordinator)
         for door in doors.values()
         if selected_doors is None or door.id in selected_doors
     ]
     if entities:
         async_add_entities(entities)
 
-    # Doors are a fixed, known set after first refresh — no dynamic re-add listener
-    # (re-adding the same unique_id on every poll makes HA log "does not generate
-    # unique IDs" errors). Entity state updates are pushed via each entity's own
-    # coordinator listener (_on_coordinator_update), registered in async_added_to_hass.
+    # Doors are a fixed, known set after first refresh — no dynamic re-add
+    # (re-adding the same unique_id on every poll makes HA log "does not
+    # generate unique IDs" errors). State updates are pushed via each
+    # entity's CoordinatorEntity listener (_handle_coordinator_update).

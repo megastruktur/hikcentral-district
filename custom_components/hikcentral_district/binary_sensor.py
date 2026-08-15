@@ -4,17 +4,24 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.binary_sensor import BinarySensorEntity
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from hikcentral_bumblebee import DoorElement
 
+from . import HikCentralDistrictConfigEntry, HikCentralDistrictDataUpdateCoordinator
 from .const import DOMAIN
 
 
-class HikDoorBinarySensor(BinarySensorEntity):
+class HikDoorBinarySensor(
+    CoordinatorEntity[HikCentralDistrictDataUpdateCoordinator], BinarySensorEntity
+):
     """HA BinarySensor for door contact (magnet state) and online status.
 
     MagnetState:
@@ -22,76 +29,96 @@ class HikDoorBinarySensor(BinarySensorEntity):
       1 = open/alarm   → on
     """
 
+    _attr_has_entity_name = True
+
     def __init__(
         self,
         door: DoorElement,
         sensor_type: str,
-        coordinator: Any,
-        entry: ConfigEntry,
+        coordinator: HikCentralDistrictDataUpdateCoordinator,
     ) -> None:
+        """Initialize the binary sensor entity."""
+        super().__init__(coordinator)
+        self._door_id = door.id
         self._door = door
         self._sensor_type = sensor_type  # "door_contact" or "online"
-        self._coordinator = coordinator
-        self._entry = entry
 
         suffix = "door_contact" if sensor_type == "door_contact" else "online"
         self._attr_unique_id = f"{DOMAIN}.binary_sensor.{door.id}.{suffix}"
-        self._attr_name = f"{door.name} {'Door Contact' if sensor_type == 'door_contact' else 'Online'}"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, door.id)},
-            "name": door.name,
-            "manufacturer": "HikCentral",
-            "model": "Door Element",
-        }
-        self._attr_extra_state_attributes = {
+        # Explicit names keep the two sensors on one device distinct.
+        if sensor_type == "door_contact":
+            self._attr_device_class = BinarySensorDeviceClass.DOOR
+            self._attr_name = "Door contact"
+        else:
+            self._attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+            self._attr_name = "Online"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, door.id)},
+            name=door.name,
+            manufacturer="HikCentral",
+            model="Door Element",
+        )
+
+    @property
+    def _door_data(self) -> DoorElement | None:
+        """Return the latest door data from the coordinator, if present."""
+        data = self.coordinator.data
+        if data and self._door_id in data:
+            return data[self._door_id]
+        return None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle coordinator data refresh — cache our door and write state."""
+        door = self._door_data
+        if door is not None:
+            self._door = door
+        self.async_write_ha_state()
+
+    @property
+    def available(self) -> bool:
+        """Return entity availability.
+
+        The contact sensor also requires the door to be online; the online
+        sensor itself stays available as long as the coordinator is healthy.
+        """
+        if not super().available:
+            return False
+        if self._sensor_type == "door_contact":
+            door = self._door_data
+            if door is None:
+                # Door missing from latest data — keep last known availability.
+                return True
+            return bool(door.online)
+        return True
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return True if door is open (magnet_state=1) or online."""
+        if self._sensor_type == "door_contact":
+            return self._door.magnet_state == 1
+        if self._sensor_type == "online":
+            return bool(self._door.online)
+        return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return door info attributes from the last known door data."""
+        door = self._door
+        return {
             "door_id": door.id,
             "door_name": door.name,
             "online": door.online,
         }
 
-    async def async_added_to_hass(self) -> None:
-        """Register a listener on coordinator updates after being added to HA."""
-        await super().async_added_to_hass()
-        self._coordinator.async_add_listener(self._on_coordinator_update)
-
-    @callback
-    def _on_coordinator_update(self) -> None:
-        """Handle coordinator data refresh — find our door and update state."""
-        door_data = self._coordinator.data
-        if door_data and self._door.id in door_data:
-            self._update_from_door(door_data[self._door.id])
-
-    @callback
-    def _update_from_door(self, door: DoorElement) -> None:
-        self._door = door
-        self.async_write_ha_state()
-
-    @property
-    def is_on(self) -> bool | None:
-        """Return True if door is open (magnet_state=1) or offline."""
-        if self._sensor_type == "door_contact":
-            return self._door.magnet_state == 1
-        if self._sensor_type == "online":
-            return self._door.online
-        return None
-
-    @property
-    def icon(self) -> str | None:
-        if self._sensor_type == "door_contact":
-            return "mdi:door-open" if self.is_on else "mdi:door-closed"
-        if self._sensor_type == "online":
-            return "mdi:network" if self.is_on else "mdi:network-off"
-        return None
-
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: HikCentralDistrictConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up binary sensor entities for all discovered doors."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator = data["coordinator"]
+    coordinator = entry.runtime_data
 
     # Add entities for doors already discovered (first setup)
     doors = coordinator.data or {}
@@ -101,11 +128,11 @@ async def async_setup_entry(
         if selected_doors is not None and door.id not in selected_doors:
             continue
         for sensor_type in ("door_contact", "online"):
-            entities.append(HikDoorBinarySensor(door, sensor_type, coordinator, entry))
+            entities.append(HikDoorBinarySensor(door, sensor_type, coordinator))
     if entities:
         async_add_entities(entities)
 
-    # Doors are a fixed, known set after first refresh — no dynamic re-add listener
-    # (re-adding the same unique_id on every poll makes HA log "does not generate
-    # unique IDs" errors). Entity state updates are pushed via each entity's own
-    # coordinator listener (_on_coordinator_update), registered in async_added_to_hass.
+    # Doors are a fixed, known set after first refresh — no dynamic re-add
+    # (re-adding the same unique_id on every poll makes HA log "does not
+    # generate unique IDs" errors). State updates are pushed via each
+    # entity's CoordinatorEntity listener (_handle_coordinator_update).

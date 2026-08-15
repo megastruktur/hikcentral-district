@@ -6,28 +6,27 @@ from unittest.mock import MagicMock
 class TestHikCentralDistrictCoordinator:
     """Test the DataUpdateCoordinator."""
 
-    async def test_coordinator_initializes_with_config_data(self, hass, mock_client):
-        """Test coordinator is initialized with config data."""
+    async def test_coordinator_initializes_with_config_data(
+        self, hass, mock_client, mock_config_entry
+    ):
+        """Test coordinator is initialized with client and config entry."""
         from hikcentral_district import HikCentralDistrictDataUpdateCoordinator
 
         coordinator = HikCentralDistrictDataUpdateCoordinator(
             hass=hass,
             client=mock_client,
-            config_data={
-                "url": "https://86.57.210.56:443",
-                "username": "u",
-                "password": "p",
-                "verify_ssl": False,
-                "scan_interval": 30,
-            },
+            entry=mock_config_entry,
         )
         assert coordinator.client is mock_client
-        assert coordinator.config_data["url"] == "https://86.57.210.56:443"
+        assert coordinator.config_entry is mock_config_entry
+        assert coordinator.update_interval.total_seconds() == 30
         assert coordinator.controller_count == 0
         assert coordinator.camera_count == 0
 
-    async def test_async_update_fetches_doors_and_counts(self, hass, mock_door):
-        """Test _async_update fetches doors and updates controller/camera counts."""
+    async def test_async_update_fetches_doors_and_counts(
+        self, hass, mock_door, mock_config_entry
+    ):
+        """Test _async_update_data fetches doors and updates controller/camera counts."""
         from hikcentral_bumblebee import BumblebeeClient
 
         sync_client = MagicMock(spec=BumblebeeClient)
@@ -48,16 +47,10 @@ class TestHikCentralDistrictCoordinator:
         coordinator = HikCentralDistrictDataUpdateCoordinator(
             hass=hass,
             client=sync_client,
-            config_data={
-                "url": "https://x.com",
-                "username": "u",
-                "password": "p",
-                "verify_ssl": False,
-                "scan_interval": 30,
-            },
+            entry=mock_config_entry,
         )
 
-        result = await coordinator._async_update()
+        result = await coordinator._async_update_data()
 
         # doors returned as dict keyed by door id
         assert "996" in result

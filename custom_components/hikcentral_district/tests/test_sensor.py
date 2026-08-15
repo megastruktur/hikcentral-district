@@ -12,10 +12,7 @@ class TestHikSystemSensor:
         """Create a HikSystemSensor entity."""
         from hikcentral_district.sensor import HikSystemSensor
 
-        entry = MagicMock()
-        entry.entry_id = "test_entry"
-        entry.options = {}
-        return HikSystemSensor(mock_coordinator, entry)
+        return HikSystemSensor(mock_coordinator)
 
     def test_native_value_is_online_controller_count(self, entity, mock_coordinator):
         """native_value returns online controller count from coordinator."""
@@ -41,10 +38,7 @@ class TestHikSystemSensor:
         """native_value does not call any client methods."""
         from hikcentral_district.sensor import HikSystemSensor
 
-        entry = MagicMock()
-        entry.entry_id = "test"
-        entry.options = {}
-        entity = HikSystemSensor(mock_coordinator, entry)
+        entity = HikSystemSensor(mock_coordinator)
 
         mock_coordinator.client.get_access_controllers.reset_mock()
         _ = entity.native_value
@@ -54,10 +48,7 @@ class TestHikSystemSensor:
         """extra_state_attributes does not call any client methods."""
         from hikcentral_district.sensor import HikSystemSensor
 
-        entry = MagicMock()
-        entry.entry_id = "test"
-        entry.options = {}
-        entity = HikSystemSensor(mock_coordinator, entry)
+        entity = HikSystemSensor(mock_coordinator)
 
         mock_coordinator.client.get_camera_elements.reset_mock()
         mock_coordinator.client.get_access_controllers.reset_mock()
@@ -66,6 +57,12 @@ class TestHikSystemSensor:
         mock_coordinator.client.get_access_controllers.assert_not_called()
 
     def test_unique_id_and_name(self, entity):
-        """unique_id and name are set correctly."""
+        """unique_id is stable; entity is the main feature of the system device.
+
+        With has_entity_name=True and _attr_name=None the entity's own name
+        is None and the friendly name derives from the device
+        ("HikCentral System").
+        """
         assert entity.unique_id == "hikcentral_district.system"
-        assert entity.name == "HikCentral System"
+        assert entity.name is None
+        assert entity.device_info["name"] == "HikCentral System"

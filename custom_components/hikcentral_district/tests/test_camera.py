@@ -1,7 +1,6 @@
 """Test camera.py — HikDoorCamera real integration behavior."""
 
 import pytest
-from unittest.mock import MagicMock
 
 
 class TestHikDoorCamera:
@@ -12,20 +11,14 @@ class TestHikDoorCamera:
         """Create a HikDoorCamera entity."""
         from hikcentral_district.camera import HikDoorCamera
 
-        entry = MagicMock()
-        entry.entry_id = "test_entry"
-        entry.options = {}
-        return HikDoorCamera(mock_camera, mock_coordinator, entry)
+        return HikDoorCamera(mock_camera, mock_coordinator)
 
     @pytest.mark.asyncio
     async def test_stream_source_returns_rtsp_url(self, mock_camera, mock_coordinator):
         """stream_source returns rtsp:// URL when camera has credentials."""
         from hikcentral_district.camera import HikDoorCamera
 
-        entry = MagicMock()
-        entry.entry_id = "test"
-        entry.options = {}
-        entity = HikDoorCamera(mock_camera, mock_coordinator, entry)
+        entity = HikDoorCamera(mock_camera, mock_coordinator)
         result = await entity.stream_source()
         assert result == "rtsp://admin:password@192.168.1.100/Streaming/Channels/101"
 
@@ -38,10 +31,7 @@ class TestHikDoorCamera:
         cam = CameraElement(
             id="99", name="nocred", address=None, username=None, password=None
         )
-        entry = MagicMock()
-        entry.entry_id = "test"
-        entry.options = {}
-        entity = HikDoorCamera(cam, mock_coordinator, entry)
+        entity = HikDoorCamera(cam, mock_coordinator)
         result = await entity.stream_source()
         assert result is None
 
@@ -54,10 +44,7 @@ class TestHikDoorCamera:
         """is_on is True when stream_source is available."""
         from hikcentral_district.camera import HikDoorCamera
 
-        entry = MagicMock()
-        entry.entry_id = "test"
-        entry.options = {}
-        entity = HikDoorCamera(mock_camera, mock_coordinator, entry)
+        entity = HikDoorCamera(mock_camera, mock_coordinator)
         # is_on checks stream_source() via the property
         rtsp = await entity.stream_source()
         assert rtsp is not None
@@ -72,10 +59,7 @@ class TestHikDoorCamera:
         cam = CameraElement(
             id="99", name="nocam", address=None, username=None, password=None
         )
-        entry = MagicMock()
-        entry.entry_id = "test"
-        entry.options = {}
-        entity = HikDoorCamera(cam, mock_coordinator, entry)
+        entity = HikDoorCamera(cam, mock_coordinator)
         rtsp = await entity.stream_source()
         assert rtsp is None
         assert entity.is_on is False

@@ -6,15 +6,15 @@ import asyncio
 import logging
 import os
 import uuid
-from typing import Any
 
 from homeassistant.components.camera import Camera
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from hikcentral_bumblebee.models import CameraElement
 
+from . import HikCentralDistrictConfigEntry, HikCentralDistrictDataUpdateCoordinator
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,24 +32,24 @@ class HikDoorCamera(Camera):
     Credentials are fetched from the CameraElements API response.
     """
 
+    _attr_has_entity_name = True
+    _attr_name = None  # camera is the device's main feature → device name
+
     def __init__(
         self,
         camera: CameraElement,
-        coordinator: Any,
-        entry: ConfigEntry,
+        coordinator: HikCentralDistrictDataUpdateCoordinator,
     ) -> None:
         super().__init__()
         self._camera = camera
         self._coordinator = coordinator
-        self._entry = entry
         self._attr_unique_id = f"{DOMAIN}.camera.{camera.id}"
-        self._attr_name = camera.name
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, camera.id)},
-            "name": camera.name,
-            "manufacturer": "HikCentral",
-            "model": "Camera Element",
-        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, camera.id)},
+            name=camera.name,
+            manufacturer="HikCentral",
+            model="Camera Element",
+        )
 
     async def stream_source(self) -> str | None:
         """Return RTSP URL for HLS/stream integration."""
@@ -136,12 +136,11 @@ class HikDoorCamera(Camera):
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: HikCentralDistrictConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up camera entities from CameraElements discovery."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator = data["coordinator"]
+    coordinator = entry.runtime_data
     cameras: list[CameraElement] = []
 
     try:
@@ -155,7 +154,7 @@ async def async_setup_entry(
     selected_cameras = entry.options.get("selected_cameras") if entry.options else None
 
     entities = [
-        HikDoorCamera(camera, coordinator, entry)
+        HikDoorCamera(camera, coordinator)
         for camera in cameras
         if selected_cameras is None or camera.id in selected_cameras
     ]

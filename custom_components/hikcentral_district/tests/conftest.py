@@ -32,6 +32,12 @@ def hass():
     Provides the subset of HomeAssistant methods/properties used by the integration.
     """
     hass = MagicMock()
+    # HA 2026.6.4 requires the frame helper to be set up before
+    # DataUpdateCoordinator is instantiated.
+    from homeassistant.helpers import frame
+
+    frame.async_setup(hass)
+
     hass.data = {}
     hass.config_entries = MagicMock()
     hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
@@ -39,6 +45,7 @@ def hass():
     hass.services = MagicMock()
     hass.services.async_register = MagicMock()
     hass.services.async_remove = AsyncMock()
+    hass.services.has_service = MagicMock(return_value=False)
 
     async def async_add_executor_job(job, *args, **kwargs):
         import asyncio
@@ -111,18 +118,12 @@ def mock_config_entry():
 
 
 @pytest.fixture
-def mock_coordinator(hass, mock_client):
+def mock_coordinator(hass, mock_client, mock_config_entry):
     """Mock DataUpdateCoordinator pre-populated with mock data."""
     coordinator = HikCentralDistrictDataUpdateCoordinator(
         hass=hass,
         client=mock_client,
-        config_data={
-            "url": "https://86.57.210.56:443",
-            "username": "u",
-            "password": "p",
-            "verify_ssl": False,
-            "scan_interval": 30,
-        },
+        entry=mock_config_entry,
     )
     # Pre-populate data with mock door
     coordinator.data = {

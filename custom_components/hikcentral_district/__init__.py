@@ -14,13 +14,21 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_URL, CONF_USERNAME, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers.update_coordinator import (
+    DataUpdateCoordinator,
+    UpdateFailed,
+)
 
 from hikcentral_bumblebee import BumblebeeClient, DoorElement
 
 from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, PLATFORMS
 
 _LOGGER = logging.getLogger(__name__)
+
+type HikCentralDistrictConfigEntry = ConfigEntry[
+    HikCentralDistrictDataUpdateCoordinator
+]
 
 
 # Service schema — door_id: str, action: int 1..4
@@ -44,19 +52,20 @@ class HikCentralDistrictDataUpdateCoordinator(DataUpdateCoordinator[dict[str, An
         self,
         hass: HomeAssistant,
         client: BumblebeeClient,
-        config_data: dict[str, Any],
+        entry: HikCentralDistrictConfigEntry,
     ) -> None:
+        """Initialize the coordinator."""
         self.client = client
-        self.config_data = config_data
         self._controller_count = 0
         self._camera_count = 0
-        scan_interval = config_data.get("scan_interval", DEFAULT_SCAN_INTERVAL)
+        scan_interval = entry.data.get("scan_interval", DEFAULT_SCAN_INTERVAL)
         super().__init__(
             hass=hass,
             logger=_LOGGER,
             name=DOMAIN,
+            config_entry=entry,
             update_interval=timedelta(seconds=scan_interval),
-            update_method=self._async_update,
+            always_update=False,
         )
 
     @property
@@ -69,34 +78,39 @@ class HikCentralDistrictDataUpdateCoordinator(DataUpdateCoordinator[dict[str, An
         """Return count of cameras from last refresh."""
         return self._camera_count
 
-    async def _async_update(self) -> dict[str, Any]:
+    async def _async_update_data(self) -> dict[str, Any]:
         """Fetch all door statuses and system counts from HikCentral.
 
         Returns:
             dict keyed by door id, value is DoorElement with full status.
             Camera and controller counts are stored as coordinator attributes.
         """
-        doors = await self.hass.async_add_executor_job(self.client.get_door_elements)
-        result: dict[str, DoorElement] = {}
-        for door in doors:
-            full_door = await self.hass.async_add_executor_job(
-                self.client.get_door, door.id
+        try:
+            doors = await self.hass.async_add_executor_job(
+                self.client.get_door_elements
             )
-            result[door.id] = full_door
+            result: dict[str, DoorElement] = {}
+            for door in doors:
+                full_door = await self.hass.async_add_executor_job(
+                    self.client.get_door, door.id
+                )
+                result[door.id] = full_door
 
-        controllers = await self.hass.async_add_executor_job(
-            self.client.get_access_controllers
-        )
-        self._controller_count = sum(
-            1 for c in controllers if getattr(c, "online", False)
-        )
+            controllers = await self.hass.async_add_executor_job(
+                self.client.get_access_controllers
+            )
+            self._controller_count = sum(
+                1 for c in controllers if getattr(c, "online", False)
+            )
 
-        cameras = await self.hass.async_add_executor_job(
-            self.client.get_camera_elements
-        )
-        self._camera_count = len(cameras)
+            cameras = await self.hass.async_add_executor_job(
+                self.client.get_camera_elements
+            )
+            self._camera_count = len(cameras)
 
-        return result
+            return result
+        except Exception as err:
+            raise UpdateFailed(f"HikCentral API error: {err}") from err
 
 
 async def async_register_services(hass: HomeAssistant, client: BumblebeeClient) -> None:
@@ -115,7 +129,9 @@ async def async_register_services(hass: HomeAssistant, client: BumblebeeClient) 
     )
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(
+    hass: HomeAssistant, entry: HikCentralDistrictConfigEntry
+) -> bool:
     """Set up hikcentral_district from a config entry."""
     client = BumblebeeClient(
         base_url=entry.data[CONF_URL],
@@ -126,31 +142,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     try:
         await hass.async_add_executor_job(client.login)
-    except Exception:
-        return False
+    except Exception as err:
+        raise ConfigEntryNotReady(f"Login failed: {err}") from err
 
-    coordinator = HikCentralDistrictDataUpdateCoordinator(
-        hass=hass,
-        client=client,
-        config_data=entry.data,
-    )
+    coordinator = HikCentralDistrictDataUpdateCoordinator(hass, client, entry)
 
+    await coordinator.async_config_entry_first_refresh()
+
+    entry.runtime_data = coordinator
+
+    # Kept for options_flow.py, which reads coordinator/client from hass.data.
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "coordinator": coordinator,
         "client": client,
     }
 
-    await coordinator.async_config_entry_first_refresh()
-
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Register door_action service so it's available immediately
-    await async_register_services(hass, client)
+    # Register door_action service so it's available immediately (once only).
+    if not hass.services.has_service(DOMAIN, "door_action"):
+        await async_register_services(hass, client)
 
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(
+    hass: HomeAssistant, entry: HikCentralDistrictConfigEntry
+) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:

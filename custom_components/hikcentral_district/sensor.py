@@ -5,15 +5,19 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import EntityCategory
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-
+from . import HikCentralDistrictConfigEntry, HikCentralDistrictDataUpdateCoordinator
 from .const import DOMAIN
 
 
-class HikSystemSensor(SensorEntity):
+class HikSystemSensor(
+    CoordinatorEntity[HikCentralDistrictDataUpdateCoordinator], SensorEntity
+):
     """HA Sensor for HikCentral system diagnostics.
 
     Exposes:
@@ -24,50 +28,47 @@ class HikSystemSensor(SensorEntity):
     All values come from the coordinator's last refresh — no network calls.
     """
 
+    _attr_has_entity_name = True
+    _attr_name = None  # main feature of the system device → device name
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:shield-home"
+
     def __init__(
         self,
-        coordinator: Any,
-        entry: ConfigEntry,
+        coordinator: HikCentralDistrictDataUpdateCoordinator,
     ) -> None:
-        self._coordinator = coordinator
-        self._entry = entry
+        """Initialize the system diagnostic sensor."""
+        super().__init__(coordinator)
         self._attr_unique_id = f"{DOMAIN}.system"
-        self._attr_name = "HikCentral System"
-        self._attr_icon = "mdi:shield-home"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, "system")},
-            "name": "HikCentral System",
-            "manufacturer": "HikCentral",
-            "model": "Bumblebee API",
-        }
-
-    @callback
-    def _update(self) -> None:
-        self.async_write_ha_state()
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, "system")},
+            name="HikCentral System",
+            manufacturer="HikCentral",
+            model="Bumblebee API",
+        )
 
     @property
     def native_value(self) -> int:
         """Return count of online controllers as primary value."""
-        return self._coordinator.controller_count
+        return self.coordinator.controller_count
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return diagnostic attributes from coordinator data."""
-        doors_count = len(self._coordinator.data) if self._coordinator.data else 0
+        doors_count = len(self.coordinator.data) if self.coordinator.data else 0
         return {
-            "online_controllers": self._coordinator.controller_count,
+            "online_controllers": self.coordinator.controller_count,
             "total_doors": doors_count,
-            "total_cameras": self._coordinator.camera_count,
+            "total_cameras": self.coordinator.camera_count,
         }
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: HikCentralDistrictConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the system diagnostic sensor."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator = data["coordinator"]
+    coordinator = entry.runtime_data
 
-    async_add_entities([HikSystemSensor(coordinator, entry)])
+    async_add_entities([HikSystemSensor(coordinator)])

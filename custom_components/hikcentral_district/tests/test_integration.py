@@ -43,6 +43,12 @@ from custom_components.hikcentral_district.camera import (
 def real_hass():
     """Minimal HomeAssistant mock that exercises the real integration code paths."""
     hass = MagicMock()
+    # HA 2026.6.4 requires the frame helper to be set up before
+    # DataUpdateCoordinator is instantiated.
+    from homeassistant.helpers import frame
+
+    frame.async_setup(hass)
+
     hass.data = {}
     hass.config_entries = MagicMock()
     hass.config_entries.async_forward_entry_setups = AsyncMock(return_value=True)
@@ -50,6 +56,7 @@ def real_hass():
     hass.services = MagicMock()
     hass.services.async_register = MagicMock()
     hass.services.async_remove = AsyncMock()
+    hass.services.has_service = MagicMock(return_value=False)
 
     async def async_add_executor_job(job, *args, **kwargs):
         import asyncio
@@ -193,11 +200,18 @@ async def test_async_setup_entry_registers_coordinator_and_client(
     integration_config_entry,
     integration_mock_client,
 ):
-    """async_setup_entry stores coordinator and client in hass.data without errors."""
+    """async_setup_entry stores the coordinator in entry.runtime_data."""
+    from custom_components.hikcentral_district import (
+        HikCentralDistrictDataUpdateCoordinator,
+    )
+
     result, entry = await setup_integration(
         real_hass, integration_config_entry, integration_mock_client
     )
     assert result is True
+    # Typed config entry pattern: coordinator lives on entry.runtime_data
+    assert isinstance(entry.runtime_data, HikCentralDistrictDataUpdateCoordinator)
+    # hass.data entry is kept for options_flow.py compatibility
     assert entry.entry_id in real_hass.data[DOMAIN]
     assert "coordinator" in real_hass.data[DOMAIN][entry.entry_id]
     assert "client" in real_hass.data[DOMAIN][entry.entry_id]
