@@ -1,0 +1,41 @@
+# Minimal full stack for a third-party host: Home Assistant + the go2rtc-hik
+# sidecar (live camera streams). Copy to your compose dir, create ./config,
+# fill HIK_* in a .env next to this file (see README), then:
+#   docker compose -f docker-compose.example.yaml up -d --build
+#
+# NOTE the deploy order: run ../install.sh (or HACS) FIRST so that
+# config/custom_components/hikcentral_district exists — go2rtc-hik
+# bind-mounts that directory (single-file mounts go stale on HACS updates,
+# which replace files by rename).
+
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    volumes:
+      - ./config:/config
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - TZ=Europe/Minsk
+
+  # Standalone go2rtc: RTSP server for live streams (127.0.0.1:18556).
+  # Camera list lives in go2rtc-hik/go2rtc.yaml — edit ids for your site.
+  # H.265 cameras need the _src + ffmpeg#video=h264 wrapper pattern
+  # (see comments there). Stream sources MUST be single-line quoted strings.
+  go2rtc-hik:
+    build: ./go2rtc-hik
+    image: go2rtc-hik:local
+    container_name: go2rtc-hik
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./go2rtc-hik/go2rtc.yaml:/etc/go2rtc/go2rtc.yaml:ro
+      - ./config/custom_components/hikcentral_district:/app/bridge:ro
+    environment:
+      - TZ=Europe/Minsk
+      - HIK_URL=${HIK_URL}
+      - HIK_USER=${HIK_USER}
+      - HIK_PASS=${HIK_PASS}

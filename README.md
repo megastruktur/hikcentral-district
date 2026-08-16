@@ -37,6 +37,50 @@ A **Home Assistant custom integration** (HACS-compatible) for HikCentral Pro (Bu
 Copy `custom_components/hikcentral_district/` into your Home Assistant's
 `custom_components/` folder.
 
+### One command: integration + browser_mod + dashboard (no HACS UI)
+
+`install.sh` sets up the whole "district" experience in an existing HA config
+directory — the integration from this checkout, **browser_mod v3.2.1** (popup
+dependency, installed straight from the GitHub zipball), the **district
+dashboard** (`.storage/lovelace.district` + dashboard entry +
+`/browser_mod.js` resource), and — optionally — the 10-minute snapshot
+refresh automation:
+
+```bash
+git clone https://github.com/megastruktur/hikcentral-district
+cd hikcentral-district
+
+# dry run first — reports everything, changes nothing:
+./install.sh --config /path/to/ha/config --check
+
+# real run (seeds the integration config entry from these env vars):
+HIK_URL=https://your-hikcentral:443 HIK_USER=you HIK_PASS='secret' \
+  ./install.sh --config /path/to/ha/config --yes --with-snapshot-automation
+```
+
+Then **restart Home Assistant** and open `<ha>/district`. Without `HIK_*`
+env vars the config entry is not seeded — configure it via the UI instead
+(Settings → Devices → Add Integration → *HikCentral District*).
+
+Notes:
+
+- Everything is idempotent — re-running only fills in what is missing.
+- `.storage` edits are **merge-only**: existing config entries, resources and
+  dashboards are never modified or dropped.
+- If popups do not open, enable **Register** once in the Browser Mod panel.
+- `--stage-only` writes the artifacts to `<config>/.install-staging/` for
+  manual review instead of applying them.
+- `--update-components` is required before the script will replace an
+  already-installed component whose version differs (HACS owns updates
+  otherwise).
+
+### Full stack from scratch (docker host)
+
+`deploy/` contains everything for a fresh host: a minimal
+`docker-compose.example.yaml` (Home Assistant + the `go2rtc-hik` RTSP
+sidecar for live streams) and the sidecar's `Dockerfile` + `go2rtc.yaml`.
+See `deploy/docker-compose.example.yaml` and `dashboards/README.md`.
+
 ## Configuration
 
 ### Config Flow (UI)

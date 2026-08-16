@@ -1,0 +1,33 @@
+{
+  "dashboard": {
+    "title": "Мой район",
+    "view_title": "Камеры и калитки",
+    "url_path": "district"
+  },
+  "cameras": [
+    {
+      "id": "111",
+      "entity": "camera.front_gate_main",
+      "lock": "lock.front_gate",
+      "jpg": "/local/snapshots/front-gate-main.jpg",
+      "title": "Главная калитка",
+      "codec": "h264"
+    },
+    {
+      "id": "222",
+      "entity": "camera.yard_nvr_ch7",
+      "lock": "lock.yard_door",
+      "jpg": "/local/snapshots/yard-ch7.jpg",
+      "title": "Въезд во двор (NVR ch7)",
+      "codec": "h265"
+    },
+    {
+      "id": "333",
+      "entity": "camera.elevator_cam",
+      "lock": null,
+      "jpg": "/local/snapshots/elevator.jpg",
+      "title": "Лифт",
+      "codec": "h264"
+    }
+  ]
+}

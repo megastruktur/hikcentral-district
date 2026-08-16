@@ -1,0 +1,35 @@
+# EXAMPLE config generated from cameras.example.json — real cameras are
+# private. Generate YOURS: python3 deploy/generate_go2rtc.py go2rtc.yaml
+# (reads dashboards/cameras.json, gitignored; ids below are placeholders).
+# Credentials come from the environment (HIK_URL/HIK_USER/HIK_PASS in the
+# stack .env — same values as the HA hikcentral_district config entry).
+# The whole integration dir is bind-mounted to /app/bridge; streams spawn
+# on demand (go2rtc starts the exec per viewer and stops it on disconnect).
+#
+# HA 2026.6 bundles only a go2rtc *client* (`go2rtc: streams:` YAML is
+# rejected in configuration.yaml) — run this config in a standalone go2rtc
+# (see docker-compose.example.yaml) and point the integration's
+# stream_url_template at rtsp://127.0.0.1:18556/hik_cam_{id}.
+
+log:
+  level: info
+
+rtsp:
+  # loopback v4 only: HA (host network) reads the stream from 127.0.0.1.
+  # HA-managed go2rtc owns :18554 (rtsp) and :18555 (webrtc, v6 wildcard).
+  listen: "127.0.0.1:18556"
+
+api:
+  # local debug API only
+  listen: "127.0.0.1:1984"
+
+streams:
+
+  hik_cam_111:
+    - "exec: python3 /app/bridge/rtsp_bridge.py --host ${HIK_URL} --username ${HIK_USER} --password ${HIK_PASS} --camera 111 --insecure"
+  hik_cam_222_src:
+    - "exec: python3 /app/bridge/rtsp_bridge.py --host ${HIK_URL} --username ${HIK_USER} --password ${HIK_PASS} --camera 222 --insecure"
+  hik_cam_222:
+    - "ffmpeg:rtsp://127.0.0.1:18556/hik_cam_222_src#video=h264"
+  hik_cam_333:
+    - "exec: python3 /app/bridge/rtsp_bridge.py --host ${HIK_URL} --username ${HIK_USER} --password ${HIK_PASS} --camera 333 --insecure"
