@@ -9,7 +9,7 @@ import uuid
 
 from hikcentral_bumblebee.models import CameraElement
 from hikcentral_bumblebee.streaming import snapshot_jpeg
-from homeassistant.components.camera import Camera, CameraEntityDeviceClass
+from homeassistant.components.camera import Camera
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -51,9 +51,10 @@ class HikDoorCamera(Camera):
         super().__init__()
         self._camera = camera
         self._coordinator = coordinator
-        self._attr_device_class = (
-            CameraEntityDeviceClass.DOORBELL if is_doorbell else None
-        )
+        # Camera device_class is not supported on HA 2026.6 — use an icon to
+        # distinguish intercom cams (introduced instead of a doorbell enum).
+        if is_doorbell:
+            self._attr_icon = "mdi:doorbell-video"
         self._attr_unique_id = f"{DOMAIN}.camera.{camera.id}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, camera.id)},
@@ -94,9 +95,7 @@ class HikDoorCamera(Camera):
                 info = await self.hass.async_add_executor_job(
                     client.get_stream_info, self._camera.id
                 )
-                live = await self.hass.async_add_executor_job(
-                    snapshot_jpeg, info, 3.0
-                )
+                live = await self.hass.async_add_executor_job(snapshot_jpeg, info, 3.0)
             except Exception:  # noqa: BLE001 — never block the fallback chain
                 live = None
             if live:
@@ -202,9 +201,8 @@ async def async_setup_entry(
     # Filter by selected_cameras if options are set
     selected_cameras = entry.options.get("selected_cameras") if entry.options else None
 
-    # Cameras associated with doors become doorbell cameras
-    # (CameraEntityDeviceClass.DOORBELL — distinguishes intercom cams from
-    # ordinary surveillance cams for door-entry dashboards)
+    # Cameras associated with doors get a doorbell icon — distinguishes
+    # intercom cams from ordinary surveillance cams for door-entry dashboards
     door_camera_ids: set[str] = set()
     if coordinator.data:
         door_camera_ids = {

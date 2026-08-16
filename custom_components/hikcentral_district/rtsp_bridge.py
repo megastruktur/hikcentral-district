@@ -41,31 +41,38 @@ import time
 # Allow running from a checkout without installing the package
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _cand in (
-    os.path.join(_HERE, "..", "..", "..", "src"),   # repo/…/src
-    os.path.join(_HERE, "..", "..", ".."),          # site-packages style
+    os.path.join(_HERE, "..", "..", "..", "src"),  # repo/…/src
+    os.path.join(_HERE, "..", "..", ".."),  # site-packages style
 ):
     if os.path.isdir(os.path.join(_cand, "hikcentral_bumblebee")):
         sys.path.insert(0, os.path.abspath(_cand))
         break
 
-from hikcentral_bumblebee import BumblebeeClient
-from hikcentral_bumblebee.streaming import (
+from hikcentral_bumblebee import BumblebeeClient  # noqa: E402
+from hikcentral_bumblebee.streaming import (  # noqa: E402
     AuthentyStreamClient,
     StreamError,
     snapshot_jpeg,
 )
 
-logging.basicConfig(level=logging.WARNING, format="%(levelname)s rtsp_bridge: %(message)s")
+logging.basicConfig(
+    level=logging.WARNING, format="%(levelname)s rtsp_bridge: %(message)s"
+)
 logging.getLogger().setLevel(logging.WARNING)
 _LOG = logging.getLogger("rtsp_bridge")
 
 _FFMPEG_RTSP_CMD = [
     "ffmpeg",
-    "-v", "error",
-    "-f", "h264",
-    "-i", "pipe:0",
-    "-c", "copy",
-    "-f", "rtsp",
+    "-v",
+    "error",
+    "-f",
+    "h264",
+    "-i",
+    "pipe:0",
+    "-c",
+    "copy",
+    "-f",
+    "rtsp",
     "pipe:1",
 ]
 
@@ -170,9 +177,10 @@ def mode_h264_file(args: argparse.Namespace) -> int:
     written = 0
     while not _terminate:
         try:
-            with AuthentyStreamClient(info, timeout=10.0) as cli, open(
-                args.h264, "ab"
-            ) as sink:
+            with (
+                AuthentyStreamClient(info, timeout=10.0) as cli,
+                open(args.h264, "ab") as sink,
+            ):
                 cli.play()
                 for nal in cli.h264_chunks():
                     if _terminate:
@@ -192,9 +200,7 @@ def main() -> int:
     parser.add_argument("--username", required=True)
     parser.add_argument("--password", required=True)
     parser.add_argument("--camera", required=True, help="camera element id")
-    parser.add_argument(
-        "--insecure", action="store_true", help="skip TLS verification"
-    )
+    parser.add_argument("--insecure", action="store_true", help="skip TLS verification")
     parser.add_argument(
         "--jpeg",
         dest="seconds",
