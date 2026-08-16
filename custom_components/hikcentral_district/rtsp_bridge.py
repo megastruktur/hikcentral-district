@@ -1,31 +1,32 @@
 #!/usr/bin/env python3
-"""HikCentral live-stream bridge for Home Assistant's bundled go2rtc.
+"""HikCentral live-stream bridge for a standalone go2rtc instance.
 
 Speaks the reverse-engineered Authenty RTSP protocol (see
-hikcentral-bumblebee.streaming) and outputs a standard RTSP stream on
-stdout — exactly what go2rtc's ``exec:`` source expects.
+hikcentral-bumblebee.streaming) and outputs raw Annex-B H.264 on
+stdout — exactly what go2rtc's ``exec:`` source expects (its pipe flow
+magic-probes the codec from the first stdout bytes; RTSP-over-stdout is
+NOT a thing for go2rtc).
 
-Setup (configuration.yaml):
+NOTE: HA 2026.6 bundles only a go2rtc *client* — ``go2rtc: streams:`` in
+configuration.yaml is rejected there. Run go2rtc standalone, e.g. as a
+container, and point the integration's stream_url_template at it:
 
-    go2rtc:
-      streams:
-        hik_cam_240:
-          - exec: python3 /config/custom_components/hikcentral_district/rtsp_bridge.py
-                 --host https://86.57.210.56 --username USER
-                 --password PASS --camera 240
+    # standalone go2rtc.yaml (single-line exec!)
+    streams:
+      hik_cam_240:
+        - exec: python3 /app/rtsp_bridge.py --host https://HCP --username USER --password PASS --camera 240 --insecure
 
-    camera:  # or custom card with the go2rtc stream name
-      - platform: generic
-        stream_source: rtsp://127.0.0.1:18554/hik_cam_240
+    # integration options → stream URL template
+    rtsp://127.0.0.1:18556/hik_cam_{id}
 
 Modes:
-  default      stream H.264 → ffmpeg → RTSP on stdout (for go2rtc exec)
+  default      stream raw Annex-B H.264 to stdout (for go2rtc exec)
   --jpeg N     grab ~N seconds of video, print one JPEG to stdout, exit
-  --h264 FILE  stream raw Annex-B H.264 to FILE until interrupted
+  --h264 FILE  append raw Annex-B H.264 to FILE (debug)
 
-The script reconnects (with fresh login + handshake) until stdin closes
-or SIGTERM/SIGINT — go2rtc restarts the exec per consumer, so "stream
-on demand" falls out for free.
+The script reconnects (with fresh login + handshake) until stdout
+closes or SIGTERM/SIGINT — go2rtc restarts the exec per consumer, so
+"stream on demand" falls out for free.
 """
 
 from __future__ import annotations
@@ -34,7 +35,6 @@ import argparse
 import logging
 import os
 import signal
-import subprocess
 import sys
 import time
 
@@ -61,21 +61,6 @@ logging.basicConfig(
 logging.getLogger().setLevel(logging.WARNING)
 _LOG = logging.getLogger("rtsp_bridge")
 
-_FFMPEG_RTSP_CMD = [
-    "ffmpeg",
-    "-v",
-    "error",
-    "-f",
-    "h264",
-    "-i",
-    "pipe:0",
-    "-c",
-    "copy",
-    "-f",
-    "rtsp",
-    "pipe:1",
-]
-
 #: On stream error, wait before reconnecting
 _RECONNECT_DELAY = 2.0
 #: Force a fresh login every N seconds (tokens are long-lived but not forever)
@@ -98,21 +83,16 @@ def _make_client(args: argparse.Namespace) -> BumblebeeClient:
 
 
 def stream_rtsp(args: argparse.Namespace) -> int:
-    """Main mode: H.264 → ffmpeg → RTSP on stdout, with auto-reconnect."""
+    """Main mode: raw Annex-B H.264 to stdout, with auto-reconnect."""
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
-    ffmpeg = subprocess.Popen(
-        _FFMPEG_RTSP_CMD,
-        stdin=subprocess.PIPE,
-        stdout=sys.stdout.buffer,
-        stderr=sys.stderr,
-    )
+    out = sys.stdout.buffer
     client: BumblebeeClient | None = None
     logged_in_at = 0.0
 
     try:
-        while not _terminate and ffmpeg.poll() is None:
+        while not _terminate:
             if client is None or time.monotonic() - logged_in_at > _RELOGIN_INTERVAL:
                 try:
                     client = _make_client(args)
@@ -126,33 +106,31 @@ def stream_rtsp(args: argparse.Namespace) -> int:
                 info = client.get_stream_info(args.camera)
                 with AuthentyStreamClient(info, timeout=10.0) as cli:
                     cli.play()
+                    # go2rtc's magic probe requires the very first NAL to be
+                    # an SPS (bitstream.Open rejects everything else), but the
+                    # Authenty stream joins mid-GOP — skip forward to the next
+                    # SPS before writing anything to stdout.
+                    synced = False
                     for nal in cli.h264_chunks():
-                        if _terminate or ffmpeg.poll() is not None:
+                        if _terminate:
                             break
-                        ffmpeg.stdin.write(nal)
-                        ffmpeg.stdin.flush()
-            except (StreamError, OSError, BrokenPipeError) as exc:
+                        if not synced:
+                            if len(nal) < 5 or (nal[4] & 0x1F) != 7:  # SPS
+                                continue
+                            synced = True
+                        out.write(nal)
+                        out.flush()
+            except BrokenPipeError:
+                # consumer (go2rtc) went away — exit, it will respawn on demand
+                return 0
+            except (StreamError, OSError) as exc:
                 _LOG.warning("stream ended: %s — reconnecting", exc)
                 time.sleep(_RECONNECT_DELAY)
         return 0
     finally:
-        _stop_ffmpeg(ffmpeg)
-    return 0
-
-
-def _stop_ffmpeg(ffmpeg: subprocess.Popen) -> None:
-    try:
-        if ffmpeg.stdin and not ffmpeg.stdin.closed:
-            ffmpeg.stdin.close()
-    except OSError:
-        pass
-    try:
-        ffmpeg.terminate()
-        ffmpeg.wait(timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
         try:
-            ffmpeg.kill()
-        except OSError:
+            out.flush()
+        except (OSError, BrokenPipeError):
             pass
 
 
@@ -195,7 +173,7 @@ def mode_h264_file(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--host", required=True, help="HikCentral base URL")
     parser.add_argument("--username", required=True)
     parser.add_argument("--password", required=True)
