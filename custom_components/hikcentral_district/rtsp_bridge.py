@@ -107,15 +107,21 @@ def stream_rtsp(args: argparse.Namespace) -> int:
                 with AuthentyStreamClient(info, timeout=10.0) as cli:
                     cli.play()
                     # go2rtc's magic probe requires the very first NAL to be
-                    # an SPS (bitstream.Open rejects everything else), but the
-                    # Authenty stream joins mid-GOP — skip forward to the next
-                    # SPS before writing anything to stdout.
+                    # an SPS (H.264) or a VPS (H.265) — bitstream.Open rejects
+                    # everything else, and the Authenty stream joins mid-GOP,
+                    # so skip forward before writing anything to stdout.
+                    h265 = cli.codec == "h265"
                     synced = False
                     for nal in cli.h264_chunks():
                         if _terminate:
                             break
                         if not synced:
-                            if len(nal) < 5 or (nal[4] & 0x1F) != 7:  # SPS
+                            if len(nal) < 5:
+                                continue
+                            if h265:
+                                if ((nal[4] >> 1) & 0x3F) != 32:  # VPS
+                                    continue
+                            elif (nal[4] & 0x1F) != 7:  # SPS
                                 continue
                             synced = True
                         out.write(nal)
