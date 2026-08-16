@@ -150,34 +150,52 @@ These actions are exposed both through the lock entities (`open`, `lock`,
 ## Live Video (optional)
 
 Snapshots work out of the box (options → **live_snapshots** on by default).
-For live streams in Lovelace, use the bundled go2rtc with the bridge script:
+Live streams in Lovelace need a **standalone go2rtc** — HA 2026.6 bundles
+only a go2rtc *client* and rejects `streams:`/`rtsp:` keys in its
+`go2rtc:` YAML.
+
+go2rtc exec-source contract (all three matter):
+
+1. the bridge must write **raw Annex-B H.264 to stdout** (no ffmpeg RTSP
+   mux) — this is what `rtsp_bridge.py` does since v0.5.2;
+2. the stream must **start at an SPS** — the bridge skips forward to the
+   next SPS on every (re)connect (go2rtc's magic probe rejects any other
+   first NAL);
+3. source list items must be **quoted strings, single-line**:
 
 ```yaml
-# configuration.yaml
-go2rtc:
-  streams:
-    hik_cam_240:                       # any name; reuse it below
-      - exec: >
-          python3 /config/custom_components/hikcentral_district/rtsp_bridge.py
-          --host https://YOUR-HCP --username USER --password PASS
-          --camera 240 --insecure
+# standalone go2rtc.yaml
+rtsp:
+  listen: "127.0.0.1:18556"   # 18554 is HA-managed go2rtc; pick a free port
+api:
+  listen: "127.0.0.1:1984"
+streams:
+  hik_cam_240:
+    - "exec: python3 /app/bridge/rtsp_bridge.py --host https://YOUR-HCP --username USER --password PASS --camera 240 --insecure"
 ```
 
-Then in the integration **Options** set *stream URL template* to
-`rtsp://127.0.0.1:18554/hik_cam_{id}` — every camera entity gets a working
-`stream_source` and Lovelace picture cards show live video. go2rtc starts
-the bridge per viewer and stops it on disconnect (stream on demand).
+`- exec: python3 …` (map form) is **silently dropped** by go2rtc — the
+stream shows up with zero producers (`streams: unknown error`).
+
+Then set *stream URL template* in the integration **Options** to
+`rtsp://127.0.0.1:18556/hik_cam_{id}` — every camera entity gets a
+working `stream_source` and Lovelace camera dialogs play live video.
+go2rtc starts the bridge per viewer and stops it on disconnect (stream
+on demand).
+
+A ready-to-deploy go2rtc sidecar (Dockerfile + go2rtc.yaml + compose
+service) lives in the megaserver `platform/homeassistant/` stack.
 
 Bridge modes:
 
 ```bash
-# RTSP on stdout (for go2rtc exec:) — default mode
+# raw H.264 on stdout (for go2rtc exec:) — default mode
 rtsp_bridge.py --host … --camera 240
 
 # one-shot JPEG to stdout ( handy for cron/scripts )
 rtsp_bridge.py --host … --camera 240 --jpeg 3 > frame.jpg
 
-# raw H.264 to file (debug)
+# raw H.264 append to file (debug)
 rtsp_bridge.py --host … --camera 240 --h264 /tmp/cam.h264
 ```
 
