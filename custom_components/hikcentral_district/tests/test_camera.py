@@ -200,9 +200,7 @@ class TestLiveSnapshot:
         entity = HikDoorCamera(mock_camera, coordinator)
         entity.hass = hass
 
-        with patch(
-            "hikcentral_district.camera.snapshot_jpeg"
-        ) as mock_snap:
+        with patch("hikcentral_district.camera.snapshot_jpeg") as mock_snap:
             result = await entity.async_request_snapshot()
 
         assert result == b"\xff\xd8\xff\xe0thumb"
@@ -247,3 +245,13 @@ class TestLiveSnapshot:
         assert await entity.stream_source() == (
             f"rtsp://127.0.0.1:18554/hik_cam_{mock_camera.id}"
         )
+
+
+async def test_stream_feature_advertised(mock_camera, mock_coordinator):
+    """supported_features must include STREAM or the frontend shows no live view."""
+    from homeassistant.components.camera import CameraEntityFeature
+
+    from custom_components.hikcentral_district.camera import HikDoorCamera
+
+    cam = HikDoorCamera(mock_camera, mock_coordinator)
+    assert CameraEntityFeature.STREAM in cam.supported_features

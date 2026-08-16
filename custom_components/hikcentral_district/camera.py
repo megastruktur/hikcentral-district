@@ -9,7 +9,7 @@ import uuid
 
 from hikcentral_bumblebee.models import CameraElement
 from hikcentral_bumblebee.streaming import snapshot_jpeg
-from homeassistant.components.camera import Camera
+from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -51,6 +51,10 @@ class HikDoorCamera(Camera):
         super().__init__()
         self._camera = camera
         self._coordinator = coordinator
+        # Advertise stream support: stream_source() serves the go2rtc template
+        # (or direct RTSP fallback). Without this flag the frontend refuses to
+        # open live views (supported_features=0 → no live in cards/popups).
+        self._attr_supported_features = CameraEntityFeature.STREAM
         # Camera device_class is not supported on HA 2026.6 — use an icon to
         # distinguish intercom cams (introduced instead of a doorbell enum).
         if is_doorbell:
