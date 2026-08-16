@@ -70,9 +70,9 @@ class HikDoorCamera(Camera):
     async def stream_source(self) -> str | None:
         """Return RTSP URL for the stream integration (go2rtc bridge preferred)."""
         entry = getattr(self._coordinator, "config_entry", None)
-        options = getattr(entry, "options", None)
-        if not isinstance(options, dict):
-            options = {}
+        # entry.options is a MappingProxyType in HA, not a plain dict —
+        # copy it so isinstance checks and .get() both behave
+        options = dict(getattr(entry, "options", None) or {})
         template = options.get("stream_url_template")
         if template:
             return template.format(id=self._camera.id, name=self._camera.name)
@@ -89,9 +89,9 @@ class HikDoorCamera(Camera):
         over RTSP when the camera is directly reachable.
         """
         entry = getattr(self._coordinator, "config_entry", None)
-        options = getattr(entry, "options", None)
-        if not isinstance(options, dict):
-            options = {}
+        # entry.options is a MappingProxyType in HA, not a plain dict —
+        # copy it so isinstance checks and .get() both behave
+        options = dict(getattr(entry, "options", None) or {})
         if options.get("live_snapshots", True):
             # 1) Live snapshot via Authenty protocol (real current frame)
             try:

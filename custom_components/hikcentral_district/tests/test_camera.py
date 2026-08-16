@@ -255,3 +255,20 @@ async def test_stream_feature_advertised(mock_camera, mock_coordinator):
 
     cam = HikDoorCamera(mock_camera, mock_coordinator)
     assert CameraEntityFeature.STREAM in cam.supported_features
+
+
+async def test_stream_source_template_from_mapping_proxy(mock_camera, mock_coordinator):
+    """Prod entry.options is a MappingProxyType — template must still win."""
+    from types import MappingProxyType
+
+    from hikcentral_district.camera import HikDoorCamera
+
+    class Entry:
+        options = MappingProxyType(
+            {"stream_url_template": "rtsp://127.0.0.1:18556/hik_cam_{id}"}
+        )
+
+    mock_coordinator.config_entry = Entry()
+    entity = HikDoorCamera(mock_camera, mock_coordinator)
+    result = await entity.stream_source()
+    assert result == "rtsp://127.0.0.1:18556/hik_cam_" + mock_camera.id
