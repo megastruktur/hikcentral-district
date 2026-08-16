@@ -7,7 +7,8 @@ A **Home Assistant custom integration** (HACS-compatible) for HikCentral Pro (Bu
 - **Door Locks** — Lock/unlock/open, remain locked/unlocked per door (actions 1–4 via raw HTTP PUT)
 - **Door Contact Binary Sensors** — magnet state per door (open/closed)
 - **Online Status Binary Sensors** — per-door online/offline monitoring
-- **Camera Entities** — RTSP streams via NVR credentials from CameraElements
+- **Camera Entities** — live snapshots via the Authenty protocol (real current frame from the VTDU, no direct camera access needed); HikCentral thumbnail as fallback
+- **Live Video (optional)** — RTSP bridge script (`rtsp_bridge.py`) for the bundled go2rtc, giving on-demand live streams in Lovelace
 - **System Diagnostics Sensors** — online controller count, total doors, total cameras
 - **Door Action Service** — `hikcentral_district.door_action` with `door_id` + `action` fields
 - **Config Flow** — URL, username, password, SSL toggle, scan interval (10–300 s)
@@ -16,7 +17,8 @@ A **Home Assistant custom integration** (HACS-compatible) for HikCentral Pro (Bu
 ## Requirements
 
 - Python 3.11+
-- [hikcentral_bumblebee](https://github.com/megastruktur/hikcentral-bumblebee) ≥ 0.1.0
+- [hikcentral_bumblebee](https://github.com/megastruktur/hikcentral-bumblebee) ≥ 0.3.0
+- `ffmpeg` in the Home Assistant container (stock images include it) — for live snapshots
 - Home Assistant 2024.11+
 - Network access to HikCentral Pro server
 
@@ -88,7 +90,7 @@ extra door is logged as a warning and skipped; it never breaks the update cycle.
 | `lock` | `Door Lock (<name>)` | Lock control per door. State from `DoorStatus.LockState` (0=locked, 1=unlocked, other=unknown). Services: lock, unlock, open |
 | `binary_sensor` | `<name> Door Contact` | Door contact magnet state (0=closed=off, 1=open=on) |
 | `binary_sensor` | `<name> Online` | Door online/offline status |
-| `camera` | `<name>` | RTSP camera stream from NVR |
+| `camera` | `<name>` | Snapshot: live Authenty frame → HikCentral thumbnail → ffmpeg RTSP fallback. Live view: see [Live Video](#live-video-optional) |
 | `sensor` | `HikCentral System` | Online controller count, total doors/cameras |
 
 ## Door Status Semantics
@@ -141,6 +143,43 @@ These actions are exposed both through the lock entities (`open`, `lock`,
 - Each request: `AppendInfo` = AES-CBC base64 signature
 - Door actions use **raw HTTP PUT** to `/ISAPI/Bumblebee/ACS/DoorElements/{id}/DoorAction?SID=<sid>` (no `MT=` parameter)
 - Door status polled via `GET /ISAPI/Bumblebee/ACS/DoorElements/{id}`
+- **Live streams**: `CommonUrl` → RTSP `Authenty` handshake (SEP DATA / Key / Identification headers,
+  AES-256-CBC with challenge-mixed key) → RTP H.264, depacketized to Annex-B (see
+  `hikcentral_bumblebee.streaming` docstring for the full reverse-engineered protocol)
+
+## Live Video (optional)
+
+Snapshots work out of the box (options → **live_snapshots** on by default).
+For live streams in Lovelace, use the bundled go2rtc with the bridge script:
+
+```yaml
+# configuration.yaml
+go2rtc:
+  streams:
+    hik_cam_240:                       # any name; reuse it below
+      - exec: >
+          python3 /config/custom_components/hikcentral_district/rtsp_bridge.py
+          --host https://YOUR-HCP --username USER --password PASS
+          --camera 240 --insecure
+```
+
+Then in the integration **Options** set *stream URL template* to
+`rtsp://127.0.0.1:18554/hik_cam_{id}` — every camera entity gets a working
+`stream_source` and Lovelace picture cards show live video. go2rtc starts
+the bridge per viewer and stops it on disconnect (stream on demand).
+
+Bridge modes:
+
+```bash
+# RTSP on stdout (for go2rtc exec:) — default mode
+rtsp_bridge.py --host … --camera 240
+
+# one-shot JPEG to stdout ( handy for cron/scripts )
+rtsp_bridge.py --host … --camera 240 --jpeg 3 > frame.jpg
+
+# raw H.264 to file (debug)
+rtsp_bridge.py --host … --camera 240 --h264 /tmp/cam.h264
+```
 
 ## Real Doors
 

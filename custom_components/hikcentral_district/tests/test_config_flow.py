@@ -52,6 +52,7 @@ class TestHikCentralDistrictConfigFlow:
     async def test_login_failure_shows_error(self, hass, mock_client):
         """Test login failure renders error on form."""
         from hikcentral_bumblebee import HikCentralError
+
         from hikcentral_district import config_flow
 
         flow = config_flow.HikCentralDistrictConfigFlow()

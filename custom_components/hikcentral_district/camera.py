@@ -7,12 +7,12 @@ import logging
 import os
 import uuid
 
+from hikcentral_bumblebee.models import CameraElement
+from hikcentral_bumblebee.streaming import snapshot_jpeg
 from homeassistant.components.camera import Camera
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-
-from hikcentral_bumblebee.models import CameraElement
 
 from . import HikCentralDistrictConfigEntry, HikCentralDistrictDataUpdateCoordinator
 from .const import DOMAIN
@@ -26,10 +26,16 @@ _SNAPSHOT_TIMEOUT = 10
 class HikDoorCamera(Camera):
     """HA Camera entity for HikCentral cameras.
 
-    RTSP URL format:
-      rtsp://{username}:{password}@{address}/Streaming/Channels/101
+    Snapshot priority (per options):
+      1. Live snapshot over the Authenty protocol (VTDU RTSP via
+         hikcentral_bumblebee.streaming) — works from any network that can
+         reach the HikCentral server; no direct camera access needed.
+      2. HikCentral thumbnail (HTTP) — stale but always available.
+      3. ffmpeg over direct camera RTSP — only when routable.
 
-    Credentials are fetched from the CameraElements API response.
+    Live view: set ``stream_url_template`` in integration options to the
+    go2rtc URL that carries the rtsp_bridge.py stream (see README), e.g.
+    ``rtsp://127.0.0.1:18554/hik_cam_{id}``.
     """
 
     _attr_has_entity_name = True
@@ -52,7 +58,14 @@ class HikDoorCamera(Camera):
         )
 
     async def stream_source(self) -> str | None:
-        """Return RTSP URL for HLS/stream integration."""
+        """Return RTSP URL for the stream integration (go2rtc bridge preferred)."""
+        entry = getattr(self._coordinator, "config_entry", None)
+        options = getattr(entry, "options", None)
+        if not isinstance(options, dict):
+            options = {}
+        template = options.get("stream_url_template")
+        if template:
+            return template.format(id=self._camera.id, name=self._camera.name)
         cam = self._camera
         if cam.address and cam.username and cam.password:
             return f"rtsp://{cam.username}:{cam.password}@{cam.address}/Streaming/Channels/101"
@@ -65,7 +78,26 @@ class HikDoorCamera(Camera):
         when the camera's RTSP is not routable from HA). Fallback: ffmpeg
         over RTSP when the camera is directly reachable.
         """
-        # 1) HikCentral thumbnail (HTTP) — reliable, no RTSP routing needed
+        entry = getattr(self._coordinator, "config_entry", None)
+        options = getattr(entry, "options", None)
+        if not isinstance(options, dict):
+            options = {}
+        if options.get("live_snapshots", True):
+            # 1) Live snapshot via Authenty protocol (real current frame)
+            try:
+                client = self._coordinator.client
+                info = await self.hass.async_add_executor_job(
+                    client.get_stream_info, self._camera.id
+                )
+                live = await self.hass.async_add_executor_job(
+                    snapshot_jpeg, info, 3.0
+                )
+            except Exception:  # noqa: BLE001 — never block the fallback chain
+                live = None
+            if live:
+                return live
+
+        # 2) HikCentral thumbnail (HTTP) — reliable, no RTSP routing needed
         try:
             thumb = await self.hass.async_add_executor_job(
                 self._coordinator.client.get_camera_thumbnail, self._camera.id
@@ -75,7 +107,7 @@ class HikDoorCamera(Camera):
         if thumb:
             return thumb
 
-        # 2) RTSP via ffmpeg as fallback
+        # 3) RTSP via ffmpeg as last resort
         rtsp = await self.stream_source()
         if not rtsp:
             return None
@@ -104,11 +136,11 @@ class HikDoorCamera(Camera):
             )
             await proc.wait()
             if proc.returncode == 0 and os.path.exists(tmp_path):
-                with open(tmp_path, "rb") as f:
+                with open(tmp_path, "rb") as f:  # noqa: ASYNC230
                     data = f.read()
                 os.remove(tmp_path)
                 return data
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Snapshot failed for %s: %s", self._camera.name, exc)
         finally:
             if os.path.exists(tmp_path):
@@ -159,7 +191,7 @@ async def async_setup_entry(
         cameras = await hass.async_add_executor_job(
             coordinator.client.get_camera_elements
         )
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass  # No cameras available
 
     # Filter by selected_cameras if options are set

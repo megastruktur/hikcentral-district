@@ -25,8 +25,9 @@ class TestHikDoorCamera:
     @pytest.mark.asyncio
     async def test_stream_source_none_without_credentials(self, mock_coordinator):
         """stream_source returns None when camera lacks address/credentials."""
-        from hikcentral_district.camera import HikDoorCamera
         from hikcentral_bumblebee.models import CameraElement
+
+        from hikcentral_district.camera import HikDoorCamera
 
         cam = CameraElement(
             id="99", name="nocred", address=None, username=None, password=None
@@ -53,8 +54,9 @@ class TestHikDoorCamera:
     @pytest.mark.asyncio
     async def test_is_on_false_when_no_rtsp(self, mock_coordinator):
         """is_on is False when camera lacks RTSP URL."""
-        from hikcentral_district.camera import HikDoorCamera
         from hikcentral_bumblebee.models import CameraElement
+
+        from hikcentral_district.camera import HikDoorCamera
 
         cam = CameraElement(
             id="99", name="nocam", address=None, username=None, password=None
@@ -151,3 +153,97 @@ class TestAsyncRequestSnapshot:
 
         assert result is None
         mock_exec.assert_awaited_once()
+
+
+class TestLiveSnapshot:
+    """Test the live Authenty snapshot path and its option gating."""
+
+    @pytest.mark.asyncio
+    async def test_live_snapshot_preferred_over_thumbnail(
+        self, hass, mock_camera, mock_coordinator, mock_client
+    ):
+        """When the live path returns JPEG, the thumbnail is not used."""
+        from unittest.mock import patch
+
+        from hikcentral_district.camera import HikDoorCamera
+
+        mock_client.get_camera_thumbnail.return_value = b"thumb-not-jpeg"
+        entity = HikDoorCamera(mock_camera, mock_coordinator)
+        entity.hass = hass
+
+        with patch(
+            "hikcentral_district.camera.snapshot_jpeg",
+            return_value=b"\xff\xd8\xff\xe0live-frame",
+        ) as mock_snap:
+            result = await entity.async_request_snapshot()
+
+        assert result == b"\xff\xd8\xff\xe0live-frame"
+        mock_snap.assert_called_once()
+        mock_client.get_camera_thumbnail.assert_not_called()
+        mock_client.get_stream_info.assert_called_once_with(mock_camera.id)
+
+    @pytest.mark.asyncio
+    async def test_live_disabled_falls_to_thumbnail(
+        self, hass, mock_camera, mock_coordinator, mock_client
+    ):
+        """live_snapshots=False skips the Authenty path entirely."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock, patch
+
+        from hikcentral_district.camera import HikDoorCamera
+
+        coordinator = MagicMock()
+        coordinator.config_entry = SimpleNamespace(options={"live_snapshots": False})
+        coordinator.client = mock_client
+        mock_client.get_camera_thumbnail.return_value = b"\xff\xd8\xff\xe0thumb"
+
+        entity = HikDoorCamera(mock_camera, coordinator)
+        entity.hass = hass
+
+        with patch(
+            "hikcentral_district.camera.snapshot_jpeg"
+        ) as mock_snap:
+            result = await entity.async_request_snapshot()
+
+        assert result == b"\xff\xd8\xff\xe0thumb"
+        mock_snap.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_live_failure_falls_to_thumbnail(
+        self, hass, mock_camera, mock_coordinator, mock_client
+    ):
+        """Live path raising falls through to the thumbnail."""
+        from unittest.mock import patch
+
+        from hikcentral_district.camera import HikDoorCamera
+
+        mock_client.get_camera_thumbnail.return_value = b"\xff\xd8\xff\xe0thumb"
+        entity = HikDoorCamera(mock_camera, mock_coordinator)
+        entity.hass = hass
+
+        with patch(
+            "hikcentral_district.camera.snapshot_jpeg",
+            side_effect=RuntimeError("VTDU down"),
+        ):
+            result = await entity.async_request_snapshot()
+
+        assert result == b"\xff\xd8\xff\xe0thumb"
+
+    @pytest.mark.asyncio
+    async def test_stream_source_template(self, hass, mock_camera, mock_coordinator):
+        """stream_url_template wins over raw NVR RTSP URL."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from hikcentral_district.camera import HikDoorCamera
+
+        coordinator = MagicMock()
+        coordinator.config_entry = SimpleNamespace(
+            options={"stream_url_template": "rtsp://127.0.0.1:18554/hik_cam_{id}"}
+        )
+        entity = HikDoorCamera(mock_camera, coordinator)
+        entity.hass = hass
+
+        assert await entity.stream_source() == (
+            f"rtsp://127.0.0.1:18554/hik_cam_{mock_camera.id}"
+        )

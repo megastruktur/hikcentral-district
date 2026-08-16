@@ -8,8 +8,8 @@ instantiated directly in tests.
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
-import pytest
 
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.hikcentral_district import (
@@ -17,22 +17,27 @@ from custom_components.hikcentral_district import (
     async_setup_entry,
     async_unload_entry,
 )
-from custom_components.hikcentral_district.lock import (
-    DoorLockEntity,
-    async_setup_entry as lock_setup,
-)
 from custom_components.hikcentral_district.binary_sensor import (
     HikDoorBinarySensor,
-    async_setup_entry as bs_setup,
 )
-from custom_components.hikcentral_district.sensor import (
-    HikSystemSensor,
-    async_setup_entry as sensor_setup,
+from custom_components.hikcentral_district.binary_sensor import (
+    async_setup_entry as bs_setup,
 )
 from custom_components.hikcentral_district.camera import (
     async_setup_entry as camera_setup,
 )
-
+from custom_components.hikcentral_district.lock import (
+    DoorLockEntity,
+)
+from custom_components.hikcentral_district.lock import (
+    async_setup_entry as lock_setup,
+)
+from custom_components.hikcentral_district.sensor import (
+    HikSystemSensor,
+)
+from custom_components.hikcentral_district.sensor import (
+    async_setup_entry as sensor_setup,
+)
 
 # ---------------------------------------------------------------------
 # Fixtures

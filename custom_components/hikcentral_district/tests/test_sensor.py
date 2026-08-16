@@ -1,7 +1,8 @@
 """Test sensor.py — HikSystemSensor diagnostics (no network calls in properties)."""
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 
 class TestHikSystemSensor:

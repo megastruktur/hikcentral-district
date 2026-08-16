@@ -1,7 +1,6 @@
 """Test lock.py — DoorLockEntity real integration behavior."""
 
 import pytest
-
 from homeassistant.components.lock import LockState
 
 

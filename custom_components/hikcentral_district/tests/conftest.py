@@ -6,8 +6,8 @@ Uses pytest-homeassistant-custom-component for real integration setup.
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
-import pytest
 
+import pytest
 from homeassistant.config_entries import ConfigEntry
 
 from custom_components.hikcentral_district import (
@@ -22,7 +22,7 @@ def enable_custom_integrations():
     The real implementation is provided by pytest-homeassistant-custom-component.
     This fixture must be present in conftest.py to activate the plugin.
     """
-    return None
+    return
 
 
 @pytest.fixture

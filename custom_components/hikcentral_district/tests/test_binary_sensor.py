@@ -1,7 +1,6 @@
 """Test binary_sensor.py — HikDoorBinarySensor real integration behavior."""
 
 import pytest
-
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 
 

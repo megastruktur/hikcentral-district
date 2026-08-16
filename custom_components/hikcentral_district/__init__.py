@@ -11,6 +11,7 @@ from datetime import timedelta
 from typing import Any
 
 import voluptuous as vol
+from hikcentral_bumblebee import BumblebeeClient, DoorElement
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_URL, CONF_USERNAME, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
@@ -19,8 +20,6 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
 )
-
-from hikcentral_bumblebee import BumblebeeClient, DoorElement
 
 from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, EXTRA_DOOR_IDS, PLATFORMS
 

@@ -1,6 +1,7 @@
 """Test service — door_action service."""
 
 from unittest.mock import MagicMock
+
 import pytest
 from homeassistant.core import ServiceCall
 
@@ -71,8 +72,9 @@ class TestDoorActionService:
 
     async def test_service_schema_validates_action_range(self, hass, mock_client):
         """Test service schema rejects action values outside 1..4."""
-        from hikcentral_district import async_register_services
         import voluptuous as vol
+
+        from hikcentral_district import async_register_services
 
         await async_register_services(hass, mock_client)
 

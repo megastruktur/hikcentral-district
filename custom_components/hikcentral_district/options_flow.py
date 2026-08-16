@@ -66,6 +66,18 @@ class HikCentralDistrictOptionsFlow(config_entries.OptionsFlow):
         schema_dict[vol.Optional("scan_interval", default=scan_interval)] = vol.All(
             int, vol.Range(min=10, max=300)
         )
+        schema_dict[
+            vol.Optional(
+                "live_snapshots", default=current_options.get("live_snapshots", True)
+            )
+        ] = bool
+        schema_dict[
+            vol.Optional(
+                "stream_url_template",
+                default=current_options.get("stream_url_template", ""),
+                description="go2rtc RTSP URL with {id} placeholder, e.g. rtsp://127.0.0.1:18554/hik_cam_{id}",
+            )
+        ] = str
 
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
