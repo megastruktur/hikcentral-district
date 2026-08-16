@@ -9,7 +9,7 @@ import uuid
 
 from hikcentral_bumblebee.models import CameraElement
 from hikcentral_bumblebee.streaming import snapshot_jpeg
-from homeassistant.components.camera import Camera
+from homeassistant.components.camera import Camera, CameraEntityDeviceClass
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -45,10 +45,15 @@ class HikDoorCamera(Camera):
         self,
         camera: CameraElement,
         coordinator: HikCentralDistrictDataUpdateCoordinator,
+        *,
+        is_doorbell: bool = False,
     ) -> None:
         super().__init__()
         self._camera = camera
         self._coordinator = coordinator
+        self._attr_device_class = (
+            CameraEntityDeviceClass.DOORBELL if is_doorbell else None
+        )
         self._attr_unique_id = f"{DOMAIN}.camera.{camera.id}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, camera.id)},
@@ -197,8 +202,19 @@ async def async_setup_entry(
     # Filter by selected_cameras if options are set
     selected_cameras = entry.options.get("selected_cameras") if entry.options else None
 
+    # Cameras associated with doors become doorbell cameras
+    # (CameraEntityDeviceClass.DOORBELL — distinguishes intercom cams from
+    # ordinary surveillance cams for door-entry dashboards)
+    door_camera_ids: set[str] = set()
+    if coordinator.data:
+        door_camera_ids = {
+            cam_id
+            for door in coordinator.data.values()
+            for cam_id in getattr(door, "associated_cameras", [])
+        }
+
     entities = [
-        HikDoorCamera(camera, coordinator)
+        HikDoorCamera(camera, coordinator, is_doorbell=camera.id in door_camera_ids)
         for camera in cameras
         if selected_cameras is None or camera.id in selected_cameras
     ]
