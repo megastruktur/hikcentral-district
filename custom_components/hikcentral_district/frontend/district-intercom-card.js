@@ -27,10 +27,13 @@
  *     initial_style "wide") holding this same card in live mode (live
  *     stream + view-switch strip). Falls back to native more-info when
  *     browser_mod is unavailable. Live mode is popup-only by design.
+ *     The stream is a real picture-glance card; since HA registers hui-*
+ *     elements lazily, it is created via window.loadCardHelpers() when the
+ *     element is not on the page yet.
  *   - device: resolved to a lock entity via the entity registry websocket.
  */
 
-const VERSION = "0.6.3";
+const VERSION = "0.6.5";
 const CARD_TAG = "district-intercom-card";
 const EDITOR_TAG = "district-intercom-card-editor";
 const SNAPSHOT_BASE = "/local/snapshots/";
@@ -558,7 +561,8 @@ class DistrictIntercomCard extends HTMLElement {
     }
     if (this._isLive()) {
       if (this._els.streamCard) this._els.streamCard.hass = this._hass;
-      else if (this._els.streamWrap && !this._streamHadHass) this._mountStream();
+      else if (this._els.streamWrap && !this._streamHadHass)
+        this._mountStream().catch(() => {});
       this._updateThumbs();
     }
   }
@@ -731,11 +735,52 @@ class DistrictIntercomCard extends HTMLElement {
     this._buildOpenButton(main);
     card.appendChild(main);
 
-    this._mountStream();
+    this._mountStream().catch(() => {});
   }
 
-  /** Create (or re-create) the live stream element for the active view. */
-  _mountStream() {
+  /** Build the live-stream card element for a view, or null.
+   *  HA registers hui-* elements lazily: on a dashboard that never rendered
+   *  a picture-glance card, `customElements.get` misses. In that case go
+   *  through window.loadCardHelpers() (the pattern browser_mod itself uses),
+   *  which triggers the lazy import. */
+  async _createStreamCard(entity) {
+    const config = {
+      type: "picture-glance",
+      camera_image: entity,
+      camera_view: "live",
+      aspect_ratio: "16:9",
+      entities: []
+    };
+
+    // 1) Element already registered -> plain synchronous path.
+    if (customElements.get("hui-picture-glance-card")) {
+      try {
+        const cam = document.createElement("hui-picture-glance-card");
+        cam.setConfig(config);
+        return cam;
+      } catch (_err) {
+        return null;
+      }
+    }
+
+    // 2) Lazy registration -> let HA's card helpers create it.
+    if (typeof window.loadCardHelpers === "function") {
+      try {
+        const helpers = await window.loadCardHelpers();
+        let cam = helpers.createCardElement(config);
+        if (cam && typeof cam.then === "function") cam = await cam;
+        if (cam && cam.tagName !== "HUI-ERROR-CARD") return cam;
+      } catch (_err) {
+        /* fall through */
+      }
+    }
+
+    return null;
+  }
+
+  /** Create (or re-create) the live stream element for the active view.
+   *  Async: element creation may need the lazy card-helpers import. */
+  async _mountStream() {
     const wrap = this._els.streamWrap;
     if (!wrap) return;
     wrap.innerHTML = "";
@@ -756,16 +801,18 @@ class DistrictIntercomCard extends HTMLElement {
       return;
     }
 
-    if (customElements.get("hui-picture-glance-card")) {
+    const cam = await this._createStreamCard(v.entity);
+
+    // Race guard: the view may have switched, or the DOM may have been
+    // rebuilt (setConfig/editor), while we awaited the element. If so, a
+    // newer render owns the stream area — do not append stale content.
+    const current = this._activeViewEntry();
+    if (this._els.streamWrap !== wrap || !current || current.entity !== v.entity) {
+      return;
+    }
+
+    if (cam) {
       try {
-        const cam = document.createElement("hui-picture-glance-card");
-        cam.setConfig({
-          type: "picture-glance",
-          camera_image: v.entity,
-          camera_view: "live",
-          aspect_ratio: "16:9",
-          entities: []
-        });
         if (this._hass) cam.hass = this._hass;
         wrap.appendChild(cam);
         this._els.streamCard = cam;
@@ -795,7 +842,7 @@ class DistrictIntercomCard extends HTMLElement {
         b.classList.toggle("active", j === index)
       );
     }
-    this._mountStream();
+    this._mountStream().catch(() => {});
   }
 
   _updateThumbs() {

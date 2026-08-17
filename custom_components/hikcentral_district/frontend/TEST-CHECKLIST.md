@@ -1,6 +1,6 @@
 # district-intercom-card — manual test checklist
 
-Run on a live Home Assistant after the integration (0.6.3+) is installed via
+Run on a live Home Assistant after the integration (0.6.5+) is installed via
 HACS and the Lovelace resource is registered
 (`/local/district/district-intercom-card.js?v=<version>`, JavaScript Module).
 
@@ -20,7 +20,7 @@ Conventions used below:
       with no changes shows a friendly "Nothing configured yet" state, not an
       error card.
 - [ ] Console shows one info line
-      `district-intercom-card v0.6.3` and no red errors from this file.
+      `district-intercom-card v0.6.5` and no red errors from this file.
 - [ ] Card follows the active theme: switch HA to dark mode — card background,
       text, and borders follow (no white card stuck on a dark dashboard).
 
@@ -72,6 +72,12 @@ Config with at least one streaming camera view.
       `initial_style: "wide"` fields.
 - [ ] The dialog opens in the **wide** style (~90vw), not the narrow default;
       the live video is large and dominant.
+- [ ] The video is a genuine LIVE stream, not a frozen still: motion in front
+      of the camera appears in real time. Check this on a dashboard that has
+      NO `picture-glance` cards of its own — HA registers `hui-*` card
+      elements lazily, so the card must create the stream via
+      `window.loadCardHelpers()` there. (If it only shows a still, the
+      helpers path is broken.)
 - [ ] Popup title (dialog header) matches the card title, and the card inside
       does NOT repeat the title (no duplicate title row).
 - [ ] The card inside the popup has no nested card chrome: no extra border,
@@ -190,3 +196,12 @@ Known interpretations of the frozen spec (see Phase 2 lane report):
 - Live mode is popup-only: it renders without card chrome (the dialog is the
   surface), without its own title row (the dialog shows the title), and with a
   horizontal view strip under the stream instead of a side column.
+- The live stream element is resolved in order: a `hui-picture-glance-card`
+  already registered on the page → otherwise created via
+  `window.loadCardHelpers()` (HA registers `hui-*` elements lazily, so this is
+  the path that fires on dashboards with no picture-glance cards) → otherwise
+  a still-image fallback (camera `entity_picture`, then the placeholder). A
+  `hui-error-card` result from the helpers is treated as failure and falls
+  through. Mounting is async and race-guarded, so a view switch (or config
+  rebuild) that happens while the element is still loading never appends a
+  stale stream.
