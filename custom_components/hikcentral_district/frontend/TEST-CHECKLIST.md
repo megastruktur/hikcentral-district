@@ -1,6 +1,6 @@
 # district-intercom-card — manual test checklist
 
-Run on a live Home Assistant after the integration (0.6.2+) is installed via
+Run on a live Home Assistant after the integration (0.6.3+) is installed via
 HACS and the Lovelace resource is registered
 (`/local/district/district-intercom-card.js?v=<version>`, JavaScript Module).
 
@@ -20,7 +20,7 @@ Conventions used below:
       with no changes shows a friendly "Nothing configured yet" state, not an
       error card.
 - [ ] Console shows one info line
-      `district-intercom-card v0.6.2` and no red errors from this file.
+      `district-intercom-card v0.6.3` and no red errors from this file.
 - [ ] Card follows the active theme: switch HA to dark mode — card background,
       text, and borders follow (no white card stuck on a dark dashboard).
 
@@ -68,20 +68,27 @@ Config with at least one streaming camera view.
 
 - [ ] Tap the cover (not the buttons): a browser_mod popup opens.
 - [ ] DevTools → WebSocket frames shows a `browser_mod/popup` call (browser_mod
-      3.x service name — NOT `show_popup`) with `title` and `content` fields.
-- [ ] Popup title matches the card title.
-- [ ] Popup shows THIS card in live mode: live video of the first view
-      (`camera_view: live`), the Open button underneath, and a vertical column
-      of view buttons on the right.
-- [ ] A "Live" badge with a pulsing dot is visible in the popup card header.
+      3.x service name — NOT `show_popup`) with `title`, `content` and
+      `initial_style: "wide"` fields.
+- [ ] The dialog opens in the **wide** style (~90vw), not the narrow default;
+      the live video is large and dominant.
+- [ ] Popup title (dialog header) matches the card title, and the card inside
+      does NOT repeat the title (no duplicate title row).
+- [ ] The card inside the popup has no nested card chrome: no extra border,
+      shadow, or rounded frame around the content — it blends into the dialog.
+- [ ] A small "Live" badge with a pulsing dot overlays the top-left corner of
+      the video.
+- [ ] With 2+ views, a horizontal strip of view buttons sits under the video;
+      the Open button sits below it, centered and sensibly sized (not a
+      full-dialog-width bar).
 
-## 5. View-switch column
+## 5. View-switch strip
 
 Config with 2+ views, e.g.
 `views: [camera.X1, {entity: camera.X2, label: "Courtyard"}]`.
 
-- [ ] One button per view in the right column; the active view is highlighted
-      (accent border) and the others are dimmed.
+- [ ] One button per view in the strip under the video; the active view is
+      highlighted (accent border) and the others are dimmed.
 - [ ] Labels: explicit `label` is shown when given; otherwise a readable label
       derived from the entity id (`camera.mr3_30_93` → "mr3 30 93").
 - [ ] Thumbnails show the camera's latest HA snapshot when available
@@ -89,6 +96,7 @@ Config with 2+ views, e.g.
 - [ ] Tap another view: the live stream switches to that camera and the
       highlight moves to the tapped button.
 - [ ] Switching back and forth repeatedly keeps working (no blank stream).
+- [ ] With only ONE view configured, no strip is shown at all.
 
 ## 6. Camera-only card (no Open button)
 
@@ -160,9 +168,11 @@ Edit the card in UI mode (pencil → card → edit).
 
 - [ ] In a normal dashboard column (~300–500 px wide) the card looks correct:
       16:9 cover, legible title, full-width Open button.
-- [ ] In the (wider) popup the view column stays on the right and usable.
-- [ ] On a narrow phone-width popup/column, the view column shrinks but stays
-      tappable; labels truncate with ellipsis instead of wrapping.
+- [ ] In the wide popup the video dominates; the view strip and Open button
+      stay proportional and centered.
+- [ ] Force the popup narrow (phone width / adaptive bottom-sheet): the video
+      stays 16:9 and usable, the view strip scrolls horizontally if the views
+      don't fit, and the Open button spans the width without overflowing.
 
 ---
 
@@ -174,4 +184,9 @@ Known interpretations of the frozen spec (see Phase 2 lane report):
 - more-info fallback targets the active camera; if the card has no views it
   targets the lock entity instead.
 - The popup uses browser_mod 3.x's `browser_mod/popup` service with only
-  schema fields (`title`, `content`) — no `size`, which doesn't exist in 3.x.
+  schema fields (`title`, `content`, `initial_style`) — no `size`, which
+  doesn't exist in 3.x. `initial_style: "wide"` selects browser_mod's built-in
+  90vw dialog style so the live stream is the hero.
+- Live mode is popup-only: it renders without card chrome (the dialog is the
+  surface), without its own title row (the dialog shows the title), and with a
+  horizontal view strip under the stream instead of a side column.

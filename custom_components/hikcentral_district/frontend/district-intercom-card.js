@@ -23,13 +23,14 @@
  *   - Cover: `image` or a built-in SVG placeholder; refresh button (top-right)
  *     calls hikcentral_district.refresh_snapshot, then cache-busts the cover.
  *   - Open (bottom, full width): lock.open for the configured lock.
- *   - Card click: browser_mod popup with this same card in live mode
- *     (live stream + view-switch column). Falls back to native more-info
- *     when browser_mod is unavailable.
+ *   - Card click: wide browser_mod popup (3.x `popup` service with
+ *     initial_style "wide") holding this same card in live mode (live
+ *     stream + view-switch strip). Falls back to native more-info when
+ *     browser_mod is unavailable. Live mode is popup-only by design.
  *   - device: resolved to a lock entity via the entity registry websocket.
  */
 
-const VERSION = "0.6.2";
+const VERSION = "0.6.3";
 const CARD_TAG = "district-intercom-card";
 const EDITOR_TAG = "district-intercom-card-editor";
 const SNAPSHOT_BASE = "/local/snapshots/";
@@ -248,42 +249,29 @@ img.cover.dim { opacity: 0.3; }
 .empty .empty-title { font-size: 15px; font-weight: 600; }
 .empty .empty-sub { font-size: 12.5px; opacity: 0.75; max-width: 34ch; }
 
-/* ---------------- live mode ---------------- */
+/* ------------- live mode (only ever rendered inside the popup) ------------- */
 
-.live-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 10px 12px 0;
+/* The browser_mod dialog is the surface: flatten all card chrome. */
+.card.live {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: visible;
 }
-.live-title {
-  font-size: 14px; font-weight: 600;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.live-badge {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--secondary-text-color, #727272);
-  flex: none;
-}
-.live-badge .dot {
-  width: 7px; height: 7px; border-radius: 50%;
-  background: var(--error-color, #db4437);
-  animation: dic-pulse 1.6s ease-in-out infinite;
-}
-@keyframes dic-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-.live-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  padding: 10px;
+.live-main {
+  position: relative;
+  display: flex; flex-direction: column;
+  gap: 12px;
 }
-.live-grid.no-col { grid-template-columns: minmax(0, 1fr); }
 
-.live-main { position: relative; display: flex; flex-direction: column; gap: 10px; }
+.stream-box { position: relative; }
 
+/* The stream is the hero: full popup width, 16:9, grows with the dialog. */
 .stream {
   position: relative;
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
   background: #10141c;
   aspect-ratio: 16 / 9;
@@ -296,14 +284,36 @@ img.cover.dim { opacity: 0.3; }
   height: 100%;
 }
 
-.views-col {
-  display: flex; flex-direction: column; gap: 8px;
-  width: clamp(64px, 24%, 96px);
-  max-height: 100%;
-  overflow-y: auto;
+/* Compact Live badge over the stream — the dialog already shows the title. */
+.live-badge {
+  position: absolute; top: 10px; left: 10px;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(13,16,23,0.6);
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  color: #fff;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+  pointer-events: none;
+  z-index: 2;
+}
+.live-badge .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--error-color, #db4437);
+  animation: dic-pulse 1.6s ease-in-out infinite;
+}
+@keyframes dic-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* View switch: horizontal strip under the stream; scrolls if it overflows. */
+.views-row {
+  display: flex; gap: 10px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding-bottom: 2px;
 }
 .view {
   display: block;
+  width: clamp(96px, 18%, 168px);
   padding: 0; border: none; background: none;
   cursor: pointer;
   flex: none;
@@ -338,6 +348,15 @@ img.cover.dim { opacity: 0.3; }
 .view.active .thumb img { opacity: 1; }
 .view.active .view-label { color: var(--primary-text-color, #212121); font-weight: 600; }
 .view:focus-visible .thumb { outline: 2px solid var(--primary-color, #03a9f4); outline-offset: 1px; }
+
+/* Open in the popup: prominent but constrained, centered when room allows. */
+.card.live .open {
+  max-width: 340px;
+  margin: 0 auto;
+  min-height: 52px;
+  border-radius: 12px;
+  border-top: none;
+}
 
 /* ---------------- editor ---------------- */
 
@@ -580,6 +599,7 @@ class DistrictIntercomCard extends HTMLElement {
 
   _buildDom() {
     if (!this._config) return;
+    this._els = {}; // drop references into the previous DOM
     const root = this.shadowRoot;
     root.innerHTML = "";
     const style = h("style");
@@ -661,26 +681,25 @@ class DistrictIntercomCard extends HTMLElement {
   _buildLive(card) {
     const views = this._views;
 
-    const head = h(
-      "div",
-      { class: "live-head" },
-      h("div", { class: "live-title" }, this._title()),
+    const main = h("div", { class: "live-main" });
+
+    // Stream is the hero. The dialog already shows the title, so the card
+    // only overlays a compact Live badge (no duplicate title row).
+    const streamBox = h("div", { class: "stream-box" });
+    const streamWrap = h("div", { class: "stream" });
+    streamBox.appendChild(streamWrap);
+    this._els.streamWrap = streamWrap;
+    streamBox.appendChild(
       h("div", { class: "live-badge" }, h("span", { class: "dot" }), "Live")
     );
-    this._els.titleEl = head.querySelector(".live-title");
-    card.appendChild(head);
+    const toast = h("div", { class: "toast", role: "status" });
+    streamBox.appendChild(toast);
+    this._els.toast = toast;
+    main.appendChild(streamBox);
 
-    const grid = h("div", {
-      class: "live-grid" + (views.length ? "" : " no-col")
-    });
-    const main = h("div", { class: "live-main" });
-    const streamWrap = h("div", { class: "stream" });
-    main.appendChild(streamWrap);
-    this._els.streamWrap = streamWrap;
-    grid.appendChild(main);
-
-    if (views.length > 0) {
-      const col = h("div", { class: "views-col", "aria-label": "Camera views" });
+    // View-switch strip under the stream — only when there is a choice.
+    if (views.length > 1) {
+      const row = h("div", { class: "views-row", "aria-label": "Camera views" });
       views.forEach((v, i) => {
         const label = v.label || deriveLabel(v.entity);
         const st = this._hass && this._hass.states && this._hass.states[v.entity];
@@ -688,7 +707,7 @@ class DistrictIntercomCard extends HTMLElement {
         const thumb = h("div", { class: "thumb" });
         if (pic) thumb.appendChild(h("img", { src: pic, alt: "" }));
         else thumb.appendChild(h("span", { class: "thumb-ic", html: ICONS.video }));
-        col.appendChild(
+        row.appendChild(
           h(
             "button",
             {
@@ -705,17 +724,12 @@ class DistrictIntercomCard extends HTMLElement {
           )
         );
       });
-      grid.appendChild(col);
-      this._els.viewsCol = col;
+      main.appendChild(row);
+      this._els.viewsRow = row;
     }
 
-    card.appendChild(grid);
-
     this._buildOpenButton(main);
-
-    const toast = h("div", { class: "toast", role: "status" });
-    main.appendChild(toast);
-    this._els.toast = toast;
+    card.appendChild(main);
 
     this._mountStream();
   }
@@ -776,8 +790,8 @@ class DistrictIntercomCard extends HTMLElement {
   _switchView(index) {
     if (index === this._activeView || !this._views[index]) return;
     this._activeView = index;
-    if (this._els.viewsCol) {
-      Array.from(this._els.viewsCol.children).forEach((b, j) =>
+    if (this._els.viewsRow) {
+      Array.from(this._els.viewsRow.children).forEach((b, j) =>
         b.classList.toggle("active", j === index)
       );
     }
@@ -785,9 +799,9 @@ class DistrictIntercomCard extends HTMLElement {
   }
 
   _updateThumbs() {
-    if (!this._els.viewsCol || !this._hass) return;
+    if (!this._els.viewsRow || !this._hass) return;
     const states = this._hass.states || {};
-    Array.from(this._els.viewsCol.children).forEach((btn, i) => {
+    Array.from(this._els.viewsRow.children).forEach((btn, i) => {
       const v = this._views[i];
       if (!v) return;
       const thumb = btn.querySelector(".thumb");
@@ -902,6 +916,8 @@ class DistrictIntercomCard extends HTMLElement {
 
     // browser_mod 3.x registers `browser_mod/popup` (not `show_popup`).
     // Only pass fields from its schema: unknown keys risk rejection.
+    // initial_style "wide" = browser_mod's built-in 90vw dialog style; the
+    // default 580px dialog is too narrow for a live stream.
     const services = this._hass.services || {};
     const available = Boolean(
       services.browser_mod && services.browser_mod.popup
@@ -910,7 +926,8 @@ class DistrictIntercomCard extends HTMLElement {
       try {
         await this._hass.callService("browser_mod", "popup", {
           title: title || "",
-          content
+          content,
+          initial_style: "wide"
         });
         return;
       } catch (_err) {
