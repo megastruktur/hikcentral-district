@@ -11,5 +11,5 @@
   "requirements": [
     "hikcentral_bumblebee@git+https://github.com/megastruktur/hikcentral-bumblebee@cdbcc46"
   ],
-  "version": "0.6.8"
+  "version": "0.6.9"
 }

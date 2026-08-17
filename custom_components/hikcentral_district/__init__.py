@@ -416,6 +416,16 @@ async def async_setup_entry(
     except Exception:  # noqa: BLE001 — resource sync must never break setup
         _LOGGER.exception("Failed to sync district Lovelace resource URL")
 
+    # The intercom card opens live popups via browser_mod; HACS cannot
+    # install cross-repo dependencies, so the user may have missed it.
+    # Warn once per setup — never block the integration on it.
+    if not hass.services.has_service("browser_mod", "popup"):
+        _LOGGER.warning(
+            "browser_mod is not installed — the district intercom card "
+            "popups will not open. Install it via HACS → Frontend → "
+            "browser_mod (or run install.sh), then reload this integration"
+        )
+
     return True
 
 
