@@ -152,9 +152,21 @@ def build_cards(cameras: list[dict], locks_only: list[dict]) -> list[dict]:
 
 
 def create_dashboard(meta: dict, cameras: list[dict], locks_only: list[dict]) -> dict:
-    """Fresh minimal dashboard skeleton with one section of district cards."""
-    cards: list = [{"type": "heading", "heading": meta.get("view_title", "Район")}]
-    cards.extend(build_cards(cameras, locks_only))
+    """Fresh minimal dashboard skeleton; district cards split across TWO grid
+    sections. In the sections view a section occupies one column, so this
+    renders two columns side by side on wide screens; on narrow screens HA
+    collapses the sections into a single column (native responsive behavior).
+    The single heading stays on top of the first section."""
+    cards: list = build_cards(cameras, locks_only)
+    heading = {"type": "heading", "heading": meta.get("view_title", "Район")}
+    if len(cards) > 1:
+        half = (len(cards) + 1) // 2
+        sections = [
+            {"type": "grid", "cards": [heading, *cards[:half]]},
+            {"type": "grid", "cards": cards[half:]},
+        ]
+    else:
+        sections = [{"type": "grid", "cards": [heading, *cards]}]
     return {
         "version": 1,
         "minor_version": 1,
@@ -167,8 +179,8 @@ def create_dashboard(meta: dict, cameras: list[dict], locks_only: list[dict]) ->
                     "path": meta.get("url_path", "district"),
                     "type": "sections",
                     "icon": "mdi:shield-home",
-                    "max_columns": 4,
-                    "sections": [{"type": "grid", "cards": cards}],
+                    "max_columns": 2,
+                    "sections": sections,
                 }],
             }
         },
