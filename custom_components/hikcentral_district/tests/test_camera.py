@@ -284,3 +284,117 @@ async def test_stream_source_template_from_mapping_proxy(mock_camera, mock_coord
     entity = HikDoorCamera(mock_camera, mock_coordinator)
     result = await entity.stream_source()
     assert result == "rtsp://127.0.0.1:18556/hik_cam_" + mock_camera.id
+
+
+async def test_stream_feature_denied_outside_allowlist(mock_camera, mock_coordinator):
+    """Cameras outside stream_camera_ids advertise NO stream (no 404 workers)."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from homeassistant.components.camera import CameraEntityFeature
+
+    from hikcentral_district.camera import HikDoorCamera
+
+    coordinator = MagicMock()
+    coordinator.config_entry = SimpleNamespace(
+        options={
+            "stream_url_template": "rtsp://127.0.0.1:18556/hik_cam_{id}",
+            "stream_camera_ids": ["240", "241"],
+        }
+    )
+    entity = HikDoorCamera(mock_camera, coordinator)  # mock_camera.id not listed
+    assert entity.supported_features == CameraEntityFeature(0)
+
+
+async def test_stream_feature_allowed_inside_allowlist(mock_camera, mock_coordinator):
+    """stream_camera_ids containing the id keeps STREAM + the template."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from homeassistant.components.camera import CameraEntityFeature
+
+    from hikcentral_district.camera import HikDoorCamera
+
+    coordinator = MagicMock()
+    coordinator.config_entry = SimpleNamespace(
+        options={
+            "stream_url_template": "rtsp://127.0.0.1:18556/hik_cam_{id}",
+            "stream_camera_ids": [mock_camera.id],
+        }
+    )
+    entity = HikDoorCamera(mock_camera, coordinator)
+    assert CameraEntityFeature.STREAM in entity.supported_features
+    assert await entity.stream_source() == (
+        f"rtsp://127.0.0.1:18556/hik_cam_{mock_camera.id}"
+    )
+
+
+async def test_intercom_camera_entity_behavior(mock_coordinator):
+    """Intercom (door-station) cameras are always on and stream by template."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from hikcentral_bumblebee.models import CameraElement
+
+    from hikcentral_district.camera import HikDoorCamera
+
+    cam = CameraElement(id="1391", name="vezd MR5")
+    coordinator = MagicMock()
+    coordinator.config_entry = SimpleNamespace(
+        options={
+            "stream_url_template": "rtsp://127.0.0.1:18556/hik_cam_{id}",
+            "stream_camera_ids": ["1391"],
+        }
+    )
+    entity = HikDoorCamera(cam, coordinator, is_intercom=True)
+    assert entity.is_on is True  # no address/credentials, still on
+    assert await entity.stream_source() == "rtsp://127.0.0.1:18556/hik_cam_1391"
+
+
+async def test_discover_intercom_cameras(hass, mock_coordinator):
+    """_discover_intercom_cameras merges door-station cams from intercoms."""
+    from unittest.mock import MagicMock
+
+    from hikcentral_bumblebee.models import (
+        VideoIntercom,
+        VideoIntercomCamera,
+    )
+
+    from hikcentral_district.camera import _discover_intercom_cameras
+
+    intercoms = [
+        VideoIntercom(id="311", name="30.18"),
+        VideoIntercom(id="313", name="31.151"),
+        VideoIntercom(id="dead", name="offline unit"),
+    ]
+    details = {
+        "311": VideoIntercom(
+            id="311",
+            name="30.18",
+            door_ids=["1396"],
+            cameras=[VideoIntercomCamera(element_id="1391", name="vezd MR5")],
+        ),
+        "313": VideoIntercom(
+            id="313",
+            name="31.151",
+            door_ids=["1397"],
+            cameras=[VideoIntercomCamera(element_id="1392", name="vezd_31.151")],
+        ),
+    }
+
+    client = MagicMock()
+    client.get_video_intercoms.return_value = intercoms
+    client.get_video_intercoms_list = None
+
+    def fake_detail(vid):
+        if vid == "dead":
+            raise RuntimeError("intercom unreachable")
+        return details[vid]
+
+    client.get_video_intercom = fake_detail
+
+    coordinator = MagicMock()
+    coordinator.client = client
+
+    result = await _discover_intercom_cameras(hass, coordinator)
+    assert result == {"1391": "vezd MR5", "1392": "vezd_31.151"}

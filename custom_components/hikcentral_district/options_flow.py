@@ -53,6 +53,12 @@ class HikCentralDistrictOptionsFlow(config_entries.OptionsFlowWithReload):
                 except Exception:
                     pass
 
+        # Door-station cameras (not in get_camera_elements) — offered by the
+        # camera platform via intercom discovery; merge into the choices.
+        for elem_id, name in entry_data.get("intercom_cameras") or []:
+            if all(elem_id != cid for cid, _ in cameras):
+                cameras.append((elem_id, f"{name} (интерком)"))
+
         # Build schema — multi-select for doors and cameras; scan_interval optional
         current_options = self._entry.options or {}
         selected_doors = current_options.get("selected_doors", [d[0] for d in doors])
@@ -76,6 +82,17 @@ class HikCentralDistrictOptionsFlow(config_entries.OptionsFlowWithReload):
         schema_dict[vol.Optional("scan_interval", default=scan_interval)] = vol.All(
             int, vol.Range(min=10, max=300)
         )
+        # Allowlist of cameras that actually have a go2rtc stream — cameras
+        # outside it do NOT advertise the STREAM feature (their live views
+        # would 404 against go2rtc forever). Empty = all cameras stream.
+        if cameras:
+            schema_dict[
+                vol.Optional(
+                    "stream_camera_ids",
+                    default=current_options.get("stream_camera_ids", []),
+                    description="Camera IDs with a real go2rtc stream; empty = all",
+                )
+            ] = select_multi_selector(cameras)
         schema_dict[
             vol.Optional(
                 "live_snapshots", default=current_options.get("live_snapshots", True)

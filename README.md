@@ -254,6 +254,30 @@ working `stream_source` and Lovelace camera dialogs play live video.
 go2rtc starts the bridge per viewer and stops it on disconnect (stream
 on demand).
 
+### stream_camera_ids (allowlist) — v0.6.7
+
+The template applies to **every** camera entity, but go2rtc only carries
+the streams you configured. Any live view of an unconfigured camera then
+starts a stream worker that 404s against go2rtc forever (log flood,
+"unavailable" camera dialogs). Since v0.6.7 the **Options** form has a
+*stream cameras* multi-select: only the selected camera ids advertise
+the STREAM feature (empty = all, the old behavior). Set it to exactly
+the ids that have a `hik_cam_<id>` stream in go2rtc.yaml.
+
+### Door-station (intercom) cameras — v0.6.7
+
+HikCentral door stations have built-in cameras that
+`get_camera_elements()` **never returns** — they are only referenced
+inside the per-intercom detail (`ACS/Device/VideoIntercoms/<id>` →
+`DoorList` + `CameraList`; the same source the mobile app uses). Since
+v0.6.7 the camera platform discovers them at setup
+(`hikcentral_bumblebee.get_video_intercom`, library ≥ commit `cdbcc46`)
+and creates regular camera entities — doorbell icon, always "on",
+streamed through the same `hik_cam_<element_id>` go2rtc URL and the
+same Authenty snapshot path. Enable them via *selected cameras* in
+**Options** and add matching exec streams to go2rtc.yaml
+(`deploy/generate_go2rtc.py` handles them like any other camera).
+
 A ready-to-deploy go2rtc sidecar (Dockerfile + go2rtc.yaml + compose
 service) lives in the megaserver `platform/homeassistant/` stack.
 

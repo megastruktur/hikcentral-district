@@ -47,37 +47,59 @@ class HikDoorCamera(Camera):
         coordinator: HikCentralDistrictDataUpdateCoordinator,
         *,
         is_doorbell: bool = False,
+        is_intercom: bool = False,
     ) -> None:
         super().__init__()
         self._camera = camera
         self._coordinator = coordinator
+        # Door-station camera discovered via the video intercom detail (not
+        # present in get_camera_elements()). Streamed through the same
+        # CommonUrl path; no direct RTSP address exists for these.
+        self._is_intercom = is_intercom
         # Cached snapshot state; refreshed by the refresh_snapshot service.
         self._last_image: bytes | None = None
         self._last_snapshot: str | None = None
-        # Advertise stream support: stream_source() serves the go2rtc template
-        # (or direct RTSP fallback). Without this flag the frontend refuses to
-        # open live views (supported_features=0 → no live in cards/popups).
-        self._attr_supported_features = CameraEntityFeature.STREAM
         # Camera device_class is not supported on HA 2026.6 — use an icon to
         # distinguish intercom cams (introduced instead of a doorbell enum).
-        if is_doorbell:
+        if is_doorbell or is_intercom:
             self._attr_icon = "mdi:doorbell-video"
         self._attr_unique_id = f"{DOMAIN}.camera.{camera.id}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, camera.id)},
             name=camera.name,
             manufacturer="HikCentral",
-            model="Camera Element",
+            model="Door Station Camera" if is_intercom else "Camera Element",
         )
 
-    async def stream_source(self) -> str | None:
-        """Return RTSP URL for the stream integration (go2rtc bridge preferred)."""
+    def _entry_options(self) -> dict:
         entry = getattr(self._coordinator, "config_entry", None)
         # entry.options is a MappingProxyType in HA, not a plain dict —
         # copy it so isinstance checks and .get() both behave
-        options = dict(getattr(entry, "options", None) or {})
-        template = options.get("stream_url_template")
-        if template:
+        return dict(getattr(entry, "options", None) or {})
+
+    def _stream_allowed(self) -> bool:
+        """True when this camera may advertise live streaming.
+
+        The ``stream_camera_ids`` option is an allowlist of camera ids that
+        actually have a go2rtc stream configured. Empty/absent = all cameras
+        (backward compatible). Cameras outside the allowlist do NOT get the
+        STREAM feature — otherwise every live view of them starts a stream
+        worker that 404s against go2rtc forever.
+        """
+        allowed = self._entry_options().get("stream_camera_ids")
+        return not allowed or self._camera.id in allowed
+
+    @property
+    def supported_features(self) -> CameraEntityFeature:
+        """STREAM only for cameras with a go2rtc stream (see _stream_allowed)."""
+        if self._stream_allowed():
+            return CameraEntityFeature.STREAM
+        return CameraEntityFeature(0)
+
+    async def stream_source(self) -> str | None:
+        """Return RTSP URL for the stream integration (go2rtc bridge preferred)."""
+        template = self._entry_options().get("stream_url_template")
+        if template and self._stream_allowed():
             return template.format(id=self._camera.id, name=self._camera.name)
         cam = self._camera
         if cam.address and cam.username and cam.password:
@@ -185,7 +207,13 @@ class HikDoorCamera(Camera):
 
     @property
     def is_on(self) -> bool:
-        """Camera is considered on if it has an RTSP URL (address + credentials)."""
+        """Camera is considered on if it has an RTSP URL (address + credentials).
+
+        Door-station (intercom) cameras have no direct RTSP address — their
+        stream is server-mediated (CommonUrl), so they are always on.
+        """
+        if self._is_intercom:
+            return True
         cam = self._camera
         return bool(cam.address and cam.username and cam.password)
 
@@ -197,12 +225,50 @@ class HikDoorCamera(Camera):
         return {}
 
 
+async def _discover_intercom_cameras(
+    hass: HomeAssistant, coordinator: HikCentralDistrictDataUpdateCoordinator
+) -> dict[str, str]:
+    """Discover door-station cameras via video intercom details.
+
+    ``get_camera_elements()`` never returns the cameras built into door
+    stations — they are only referenced inside the per-intercom detail
+    (DoorList/CameraList), the same source the mobile app uses. Returns
+    ``{element_id: name}`` for every intercom camera on the server.
+    """
+    try:
+        intercoms = await hass.async_add_executor_job(
+            coordinator.client.get_video_intercoms
+        )
+    except Exception:  # noqa: BLE001 — intercom cams are optional
+        return {}
+
+    result: dict[str, str] = {}
+    sem = asyncio.Semaphore(5)  # be gentle to the server on every setup
+
+    async def _one(it) -> None:
+        async with sem:
+            try:
+                detail = await hass.async_add_executor_job(
+                    coordinator.client.get_video_intercom, it.id
+                )
+            except Exception:  # noqa: BLE001 — one dead intercom ≠ failure
+                return
+            for cam in detail.cameras:
+                if cam.element_id and cam.element_id not in result:
+                    result[cam.element_id] = cam.name or detail.name or it.name
+
+    await asyncio.gather(*(_one(it) for it in intercoms))
+    if result:
+        _LOGGER.debug("intercom cameras discovered: %s", sorted(result))
+    return result
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: HikCentralDistrictConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up camera entities from CameraElements discovery."""
+    """Set up camera entities from CameraElements + intercom discovery."""
     coordinator = entry.runtime_data
     cameras: list[CameraElement] = []
 
@@ -212,6 +278,16 @@ async def async_setup_entry(
         )
     except Exception:  # noqa: BLE001, S110
         pass  # No cameras available
+
+    # Door-station cameras referenced only by intercom details
+    intercom_cams = await _discover_intercom_cameras(hass, coordinator)
+    known_ids = {c.id for c in cameras}
+    intercom_ids: set[str] = set()
+    for elem_id, name in intercom_cams.items():
+        if elem_id in known_ids:
+            continue
+        cameras.append(CameraElement(id=elem_id, name=name))
+        intercom_ids.add(elem_id)
 
     # Filter by selected_cameras if options are set
     selected_cameras = entry.options.get("selected_cameras") if entry.options else None
@@ -232,7 +308,10 @@ async def async_setup_entry(
         if selected_cameras is not None and camera.id not in selected_cameras:
             continue
         entity = HikDoorCamera(
-            camera, coordinator, is_doorbell=camera.id in door_camera_ids
+            camera,
+            coordinator,
+            is_doorbell=camera.id in door_camera_ids,
+            is_intercom=camera.id in intercom_ids,
         )
         entities.append(entity)
         cameras_by_id[camera.id] = entity
@@ -241,6 +320,10 @@ async def async_setup_entry(
     hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})[
         "cameras_by_id"
     ] = cameras_by_id
+    # Intercom camera choices for the options flow multi-selects.
+    hass.data[DOMAIN][entry.entry_id]["intercom_cameras"] = sorted(
+        intercom_cams.items()
+    )
 
     if entities:
         async_add_entities(entities)
