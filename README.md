@@ -77,12 +77,91 @@ Notes:
   already-installed component whose version differs (HACS owns updates
   otherwise).
 
-### Full stack from scratch (docker host)
+### Full stack from scratch (docker host, incl. the rtc sidecar)
 
-`deploy/` contains everything for a fresh host: a minimal
-`docker-compose.example.yaml` (Home Assistant + the `go2rtc-hik` RTSP
-sidecar for live streams) and the sidecar's `Dockerfile` + `go2rtc.yaml`.
-See `deploy/docker-compose.example.yaml` and `dashboards/README.md`.
+Everything below lives in this repo: `install.sh` (integration +
+browser_mod + dashboard into an HA config dir), `deploy/` (compose with
+Home Assistant + the **go2rtc-hik** RTSP sidecar), and the generators
+(`dashboards/autodiscover.py`, `deploy/generate_go2rtc.py`,
+`dashboards/generate_district.py`). HikCentral Pro servers older than
+V3 (verified on V1.7) have **no server-side CCTV↔door links** — the
+doorbell channel is the only "related" camera, so the flow below starts
+from doorbell channels and lets you add CCTV angles afterwards.
+
+> **HACS-first variant**: install the integration and browser_mod via
+> HACS *before* step 4 (integration → custom repository, browser_mod →
+> Frontend). `install.sh` never replaces already-installed components
+> (that needs `--update-components`), so in that setup it only stages
+> the dashboard, resources and the snapshot seed while HACS keeps
+> owning the code.
+
+```bash
+# 1. clone + prepare the config dir and credentials
+git clone https://github.com/megastruktur/hikcentral-district
+cd hikcentral-district
+mkdir -p config
+cat > .env <<'EOF'
+HIK_URL=https://your-hikcentral:443
+HIK_USER=you
+HIK_PASS=secret
+EOF
+chmod 600 .env
+
+# 2. cameras.json: door map + AUTO-DISCOVERED doorbell channels (first view)
+cp dashboards/cameras.example.json dashboards/cameras.json
+$EDITOR dashboards/cameras.json        # fill "doors": {"lock.x": "<door_id>"} …
+set -a; . ./.env; set +a
+python3 dashboards/autodiscover.py --write   # dry-run without --write
+
+# 3. generate the go2rtc sidecar config from the same cameras.json
+python3 deploy/generate_go2rtc.py deploy/go2rtc-hik/go2rtc.yaml
+
+# 4. install integration + browser_mod + dashboard skeleton into ./config
+./install.sh --config ./config --check          # dry run first
+HIK_URL=$HIK_URL HIK_USER=$HIK_USER HIK_PASS=$HIK_PASS \
+  ./install.sh --config ./config --yes          # seeds the config entry too
+
+# 5. start the stack: HA + go2rtc-hik (exec bridge bind-mounted from the
+#    integration dir — that is why step 4 runs BEFORE compose up)
+docker compose -f deploy/docker-compose.example.yaml up -d --build
+```
+
+Finish in the HA UI:
+
+1. Onboarding (fresh installs), then Settings → Devices → **HikCentral
+   District** (pre-seeded by step 4; otherwise add it with URL/user/pass).
+2. **Options** of the integration: *Stream URL Template* =
+   `rtsp://127.0.0.1:18556/hik_cam_{id}`; *Stream Cameras* = the camera
+   ids from your `cameras.json` (the go2rtc stream set); select the
+   doorbell cameras in *Selected Cameras* (they appear with the
+   «(интерком)» suffix — discovered from door stations since v0.6.7).
+3. Open `<ha>/district` — snapshot covers, live popups, Open buttons.
+   If popups do not open, toggle **Register** once in the Browser Mod panel.
+
+Snapshot covers: each card has a refresh button. For periodic refresh,
+add the script + an automation on your host (what our prod uses):
+
+```yaml
+# configuration.yaml
+shell_command:
+  refresh_district_snapshots: python3 /config/scripts/refresh_district_snapshots.py
+# automations.yaml (every 10 minutes; script reads dashboards/cameras.json
+# copied next to it, creds from the integration's config entry)
+- id: district_snapshots_refresh
+  alias: district_snapshots_refresh
+  trigger: [{ platform: time_pattern, minutes: /10 }]
+  action: [{ service: shell_command.refresh_district_snapshots, data: {} }]
+  mode: single
+```
+
+Updating later: HACS (or `git pull` + `./install.sh --config ./config
+--yes --update-components`), re-run steps 2–3 when cameras change, and
+`docker compose -f deploy/docker-compose.example.yaml up -d --build` to
+rebuild the sidecar (go2rtc reads its config **at container start only**).
+
+Details: `dashboards/README.md` (cards, cameras.json schema, generators),
+`deploy/go2rtc-hik/go2rtc.yaml` comments (H.264 direct vs H.265 wrapper),
+[Live Video](#live-video-optional) (exec-source contract + allowlist).
 
 ## Configuration
 
@@ -105,6 +184,7 @@ See `deploy/docker-compose.example.yaml` and `dashboards/README.md`.
 | Extra Door IDs | Comma-separated HikCentral door IDs to fetch directly by ID (doors the list call does not return — see [Door Discovery](#door-discovery)) |
 | Live Snapshots | Fetch real current frames via the Authenty protocol (default on) |
 | Stream URL Template | go2rtc URL with `{id}` placeholder for live views (see [Live Video](#live-video-optional)) |
+| Stream Cameras | Allowlist of camera ids that advertise live streaming (empty = all; keep it equal to your go2rtc.yaml stream set — see [Live Video](#live-video-optional)) |
 
 ## Door Discovery
 
