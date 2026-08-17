@@ -163,6 +163,21 @@ Details: `dashboards/README.md` (cards, cameras.json schema, generators),
 `deploy/go2rtc-hik/go2rtc.yaml` comments (H.264 direct vs H.265 wrapper),
 [Live Video](#live-video-optional) (exec-source contract + allowlist).
 
+### HAOS / Supervised users: the RTC sidecar as an add-on
+
+The compose flow above needs a docker host. On **HAOS / Home Assistant
+Supervised** there is no `docker compose` — install the same go2rtc-hik
+sidecar as an add-on instead:
+[megastruktur/ha-addons-hikcentral](https://github.com/megastruktur/ha-addons-hikcentral)
+(Settings → Add-ons → Add repository). Order still matters: **integration
+first** (HACS — the add-on exec-mounts `rtsp_bridge.py` from
+`/config/custom_components/hikcentral_district`), then configure the add-on
+with the same HIK credentials and the camera ids from your
+`cameras.json` / `autodiscover.py`. Ports are identical to compose
+(`127.0.0.1:18556` RTSP, `:1984` API), so *Stream URL Template* and the
+allowlist are set exactly as in step 2 above. Core/container installs keep
+using the compose sidecar.
+
 ## Configuration
 
 ### Config Flow (UI)
