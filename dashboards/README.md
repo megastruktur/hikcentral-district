@@ -91,6 +91,28 @@ python3 deploy/generate_go2rtc.py go2rtc.yaml
 строки; никакого `#audio=none`; HEVC-камерам нужен `_src` + обёртка;
 go2rtc exec ждёт сырой Annex-B, стартующий с SPS/VPS (мост делает сам).
 
+
+### Автодискавер домофон-каналов (autodiscover.py)
+
+На серверах HikCentral Professional < V3 (проверено на V1.7) мобильное
+приложение показывает у интеркома ТОЛЬКО канал вызывной панели — серверных
+CCTV-связок (`RelatedElementList`) там не существует. Единственная
+«правильная по серверу» камера двери — её домофонный канал.
+
+`autodiscover.py` находит его для каждой двери из карты `"doors"` в
+cameras.json (lock entity → door id) и ставит первым view группы, не
+трогая ваши CCTV-надстройки. Идемпотент; правки entity/названий после
+дискавера сохраняются (сверка по id камеры).
+
+```bash
+HIK_URL=... HIK_USER=... HIK_PASS=... \
+  python3 dashboards/autodiscover.py --write        # dry-run без --write
+```
+
+door id = суффикс unique_id замка в HA
+(`hikcentral_district.lock.<id>`); entity камеры выводится той же
+slugify-нормализацией, что использует HA (проверено на живых id).
+
 ## Применение (наш прод)
 
 Живой дашборд — источник правды в приватном мега-репо

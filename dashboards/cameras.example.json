@@ -35,5 +35,8 @@
       "lock": "lock.back_door",
       "title": "Back Door"
     }
-  ]
+  ],
+  "doors": {
+    "lock.front_gate": "536"
+  }
 }
