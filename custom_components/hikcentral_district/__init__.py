@@ -6,6 +6,7 @@ Exposes locks, binary sensors, cameras, and diagnostic sensors.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -36,6 +37,9 @@ type HikCentralDistrictConfigEntry = ConfigEntry[
 
 #: File name of the Lovelace card shipped inside the integration package.
 FRONTEND_JS_NAME = "district-intercom-card.js"
+
+#: Browser URL of the synced card (served from <config>/www/district/).
+FRONTEND_RESOURCE_URL_BASE = f"/local/district/{FRONTEND_JS_NAME}"
 
 
 # Service schema — door_id: str, action: int 1..4
@@ -87,6 +91,95 @@ def sync_frontend_js(hass: HomeAssistant, src: os.PathLike | None = None) -> boo
     tmp.write_bytes(data)
     os.replace(tmp, dest)
     _LOGGER.info("Synced frontend card %s -> %s", src, dest)
+    return True
+
+
+def _read_integration_version() -> str | None:
+    """Read this integration's version from its bundled manifest.json."""
+    try:
+        manifest = json.loads(
+            (Path(__file__).parent / "manifest.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return None
+    version = manifest.get("version")
+    return str(version) if version else None
+
+
+async def async_sync_frontend_resource(hass: HomeAssistant) -> bool:
+    """Ensure the Lovelace resource URL carries the current ``?v=<version>``.
+
+    The registered resource URL (``/local/district/<card>.js?v=<ver>``) is the
+    only browser cache-buster; when the card changes and the version bumps,
+    the stale ``?v=`` keeps serving cached old JS. This merges the current
+    version into the registered resource:
+
+    - existing resource with a stale URL -> ``async_update_item`` (url only,
+      the resource type is kept),
+    - no resource yet -> ``async_create_item`` as ``module``,
+    - URL already current -> no-op.
+
+    Never raises: Lovelace may be absent (tests/CI) or running in YAML mode
+    (read-only collection) — both are skipped with a warning.
+
+    Returns:
+        True when the resource was created or updated.
+    """
+    version = await hass.async_add_executor_job(_read_integration_version)
+    if not version:
+        _LOGGER.warning(
+            "Cannot sync Lovelace resource: integration version not readable"
+        )
+        return False
+    desired_url = f"{FRONTEND_RESOURCE_URL_BASE}?v={version}"
+
+    # HA stores a LovelaceData dataclass under the "lovelace" key; its
+    # .resources attribute is the resource collection. (A dict shape is
+    # tolerated for forward/backward compatibility.)
+    lovelace_data = hass.data.get("lovelace")
+    resources = getattr(lovelace_data, "resources", None)
+    if resources is None and isinstance(lovelace_data, dict):
+        resources = lovelace_data.get("resources")
+    if resources is None or not hasattr(resources, "async_items"):
+        _LOGGER.warning(
+            "Lovelace resources not available; skipping resource URL sync"
+        )
+        return False
+
+    # Match by URL prefix so a stale ?v= query does not prevent the match.
+    existing = next(
+        (
+            item
+            for item in resources.async_items() or []
+            if str(item.get("url", "")).startswith(FRONTEND_RESOURCE_URL_BASE)
+        ),
+        None,
+    )
+
+    if existing is not None:
+        if existing.get("url") == desired_url:
+            return False  # already current
+        if not existing.get("id") or not hasattr(resources, "async_update_item"):
+            _LOGGER.warning(
+                "Lovelace resource %s is stale but the collection is"
+                " read-only (YAML mode); update it manually to %s",
+                existing.get("url"),
+                desired_url,
+            )
+            return False
+        await resources.async_update_item(existing["id"], {"url": desired_url})
+        _LOGGER.info("Updated Lovelace resource URL to %s", desired_url)
+        return True
+
+    if not hasattr(resources, "async_create_item"):
+        _LOGGER.warning(
+            "Lovelace resource collection is read-only (YAML mode);"
+            " add %s manually",
+            desired_url,
+        )
+        return False
+    await resources.async_create_item({"url": desired_url, "res_type": "module"})
+    _LOGGER.info("Created Lovelace resource %s", desired_url)
     return True
 
 
@@ -315,6 +408,13 @@ async def async_setup_entry(
         await hass.async_add_executor_job(sync_frontend_js, hass)
     except Exception:  # noqa: BLE001 — JS sync must never break setup
         _LOGGER.exception("Failed to sync district intercom card JS")
+
+    # Keep the registered Lovelace resource URL's ?v= cache-buster current.
+    # Must never break setup — Lovelace may be absent or in YAML mode.
+    try:
+        await async_sync_frontend_resource(hass)
+    except Exception:  # noqa: BLE001 — resource sync must never break setup
+        _LOGGER.exception("Failed to sync district Lovelace resource URL")
 
     return True
 
