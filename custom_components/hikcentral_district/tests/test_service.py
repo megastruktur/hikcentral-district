@@ -6,6 +6,15 @@ import pytest
 from homeassistant.core import ServiceCall
 
 
+def get_registration(hass, service_name):
+    """Return (handler, schema) for a service registered on the hass mock."""
+    for call in hass.services.async_register.call_args_list:
+        args, kwargs = call
+        if args[0] == "hikcentral_district" and args[1] == service_name:
+            return args[2], kwargs.get("schema")
+    raise AssertionError(f"service {service_name} was not registered")
+
+
 class TestDoorActionService:
     """Test the door_action service."""
 
@@ -15,11 +24,7 @@ class TestDoorActionService:
 
         await async_register_services(hass, mock_client)
 
-        call_args = hass.services.async_register.call_args_list[-1]
-        args, kwargs = call_args
-        domain, service, handler = args
-        assert domain == "hikcentral_district"
-        assert service == "door_action"
+        handler, _ = get_registration(hass, "door_action")
 
         service_call = MagicMock(spec=ServiceCall)
         service_call.data = {"door_id": "996", "action": 1}
@@ -32,9 +37,7 @@ class TestDoorActionService:
 
         await async_register_services(hass, mock_client)
 
-        call_args = hass.services.async_register.call_args_list[-1]
-        args, kwargs = call_args
-        _, _, handler = args
+        handler, _ = get_registration(hass, "door_action")
         service_call = MagicMock(spec=ServiceCall)
         service_call.data = {"door_id": "997", "action": 2}
         await handler(service_call)
@@ -48,9 +51,7 @@ class TestDoorActionService:
 
         await async_register_services(hass, mock_client)
 
-        call_args = hass.services.async_register.call_args_list[-1]
-        args, kwargs = call_args
-        _, _, handler = args
+        handler, _ = get_registration(hass, "door_action")
         service_call = MagicMock(spec=ServiceCall)
         service_call.data = {"door_id": "998", "action": 3}
         await handler(service_call)
@@ -62,9 +63,7 @@ class TestDoorActionService:
 
         await async_register_services(hass, mock_client)
 
-        call_args = hass.services.async_register.call_args_list[-1]
-        args, kwargs = call_args
-        _, _, handler = args
+        handler, _ = get_registration(hass, "door_action")
         service_call = MagicMock(spec=ServiceCall)
         service_call.data = {"door_id": "996", "action": 4}
         await handler(service_call)
@@ -78,10 +77,7 @@ class TestDoorActionService:
 
         await async_register_services(hass, mock_client)
 
-        call_args = hass.services.async_register.call_args_list[-1]
-        args, kwargs = call_args
-        _, _, _ = args
-        schema = kwargs.get("schema")
+        _, schema = get_registration(hass, "door_action")
 
         with pytest.raises((vol.Error, vol.MultipleInvalid)):
             schema({"door_id": "996", "action": 5})
@@ -92,10 +88,7 @@ class TestDoorActionService:
 
         await async_register_services(hass, mock_client)
 
-        call_args = hass.services.async_register.call_args_list[-1]
-        args, kwargs = call_args
-        _, _, _ = args
-        schema = kwargs.get("schema")
+        _, schema = get_registration(hass, "door_action")
 
         for action in (1, 2, 3, 4):
             result = schema({"door_id": "996", "action": action})

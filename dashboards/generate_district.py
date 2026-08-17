@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the camera cards dashboard from a private cameras.json config.
+"""Generate the district dashboard from a private cameras.json config.
 
 The repo deliberately ships NO dashboard with real cameras — entity ids,
 names and stream mappings are private. Everything is generated from
@@ -10,28 +10,49 @@ names and stream mappings are private. Everything is generated from
       "cameras": [
         {"id": "240", "entity": "camera.x", "lock": "lock.x",
          "jpg": "/local/snapshots/x.jpg", "title": "...", "codec": "h264|h265"}
+      ],
+      "locks_only": [                      // optional; may be absent
+        {"lock": "lock.y", "title": "Door Y"}
       ]
     }
 
-Card shape per camera (v7):
+Cameras are grouped into ONE card per door by their shared ``lock`` value:
 
-  static   picture-glance — core card: jpg + lock.open entity icon +
-           tap image -> more-info(camera)  [native dialog, always works]
-  popup    custom:popup-card (browser_mod) right after the static card —
-           replaces the camera's more-info dialog with a LIVE
-           picture-glance (aspect_ratio 16:9 = placeholder while loading)
-           + a big «ОТКРЫТЬ» button. Invisible outside edit mode.
-           Graceful degradation: if browser_mod fails, the native
-           more-info camera player still plays the stream.
+  views         = the group's camera entities, in cameras.json order
+  entity        = the shared lock entity
+  image         = the FIRST camera's jpg (card cover)
+  snapshot_file = basename of the first camera's jpg (refresh target)
+  title         = the first camera's title
+
+Cameras with ``lock: null`` become their own camera-only card
+(``views: [<entity>]``, no ``entity`` — the card hides the Open button).
+``locks_only`` entries become Open-only cards (``entity`` set, empty
+``views``) for doors that have no streamable cameras yet.
+
+Card shape (v8 — custom:district-intercom-card; frozen config schema):
+
+    {
+      "type": "custom:district-intercom-card",
+      "entity": "lock.x",                    # lock entity; omitted camera-only
+      "views": ["camera.a", "camera.b"],     # explicit camera entities
+      "image": "/local/snapshots/x.jpg",     # optional cover
+      "snapshot_file": "x.jpg",              # optional refresh target
+      "title": "X"                           # optional
+    }
+
+The card itself handles cover/refresh, the Open button and the popup
+(browser_mod live stream + views column) — no popup-card interception is
+emitted anymore. The card JS is registered by install.sh as the Lovelace
+resource /local/district/district-intercom-card.js?v=<version>.
 
 Usage:
     # fresh dashboard skeleton (install.sh / new instances)
     python3 generate_district.py --create out.json [--cameras cameras.json]
 
-    # rebuild camera cards inside an existing exported dashboard
+    # rebuild district cards inside an existing exported dashboard
     python3 generate_district.py dashboard.json [--cameras cameras.json]
 
-    # diff only (also normalizes to one card pair per camera)
+    # diff only (also normalizes legacy v7 picture-glance/popup-card pairs)
     python3 generate_district.py --check dashboard.json [--cameras cameras.json]
 """
 
@@ -43,9 +64,15 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+CARD_TYPE = "custom:district-intercom-card"
 
-def load_cameras(path: str | None = None) -> tuple[dict, dict[str, tuple]]:
-    """Return (dashboard_meta, {camera_entity: (hik_id, lock, jpg, title)})."""
+
+def load_cameras(path: str | None = None) -> tuple[dict, list[dict], list[dict]]:
+    """Return (dashboard_meta, cameras_list, locks_only_list).
+
+    cameras_list items: {"entity", "lock" (str|None), "jpg", "title"}.
+    locks_only_list items: {"lock", "title"}.
+    """
     path = path or os.path.join(HERE, "cameras.json")
     if not os.path.isfile(path):
         sys.exit(
@@ -55,90 +82,79 @@ def load_cameras(path: str | None = None) -> tuple[dict, dict[str, tuple]]:
         )
     cfg = json.load(open(path, encoding="utf-8"))
     meta = cfg.get("dashboard") or {}
-    by_cam = {
-        c["entity"]: (
-            str(c["id"]),
-            c.get("lock") or None,
-            c["jpg"],
-            c.get("title", c["entity"]),
-        )
+    cameras = [
+        {
+            "entity": c["entity"],
+            "lock": c.get("lock") or None,
+            "jpg": c["jpg"],
+            "title": c.get("title", c["entity"]),
+        }
         for c in cfg.get("cameras", [])
-    }
-    return meta, by_cam
-
-
-def _open_lock(lock: str) -> dict:
-    return {
-        "entity": lock,
-        "icon": "mdi:door-open",
-        "tap_action": {
-            "action": "perform-action",
-            "perform_action": "lock.open",
-            "target": {"entity_id": lock},
-        },
-    }
-
-
-def card_for(cam: str, by_cam: dict[str, tuple]) -> dict:
-    """Static core card: snapshot jpg + lock-open icon + native more-info."""
-    _hik_id, lock, jpg, title = by_cam[cam]
-    entities = [_open_lock(lock)] if lock else [
-        {"entity": cam, "icon": "mdi:cctv", "name": " "}
     ]
-    return {
-        "type": "picture-glance",
-        "title": title,
-        "image": jpg,
-        "entities": entities,
-        "tap_action": {"action": "more-info", "entity": cam},
-    }
+    locks_only = [
+        {"lock": lo["lock"], "title": lo.get("title", lo["lock"])}
+        for lo in cfg.get("locks_only", [])
+    ]
+    return meta, cameras, locks_only
 
 
-def popup_card_for(cam: str, by_cam: dict[str, tuple]) -> dict:
-    """browser_mod popup-card: replaces the camera's more-info dialog with
-    live video (fixed-height placeholder) + a big «ОТКРЫТЬ» button."""
-    _hik_id, lock, jpg, title = by_cam[cam]
-    video_card = {
-        "type": "picture-glance",
-        "title": " ",
-        "camera_image": cam,
-        "camera_view": "live",
-        # aspect_ratio держит высоту карточки ещё до старта стрима
-        "aspect_ratio": "16:9",
-        "entities": [_open_lock(lock)] if lock else [],
-    }
-    open_button = {
-        "type": "custom:button-card",
-        "name": "ОТКРЫТЬ",
-        "icon": "mdi:door-open",
-        "tap_action": {
-            "action": "perform-action",
-            "perform_action": "lock.open",
-            "target": {"entity_id": lock},
-        },
-        "styles": {
-            "card": [{"height": "64px", "font-size": "22px"}],
-            "icon": [{"--mdc-icon-size": "36px"}],
-        },
-    }
-    return {
-        "type": "custom:popup-card",
-        "entity": cam,
-        "title": title,
-        "size": "normal",
-        "card": {
-            "type": "vertical-stack",
-            "cards": [video_card] + ([open_button] if lock else []),
-        },
-    }
+def _lock_title(lock: str) -> str:
+    """Human title from a lock entity id: lock.vyezd2_3 -> 'Vyezd2 3'."""
+    name = lock.split(".", 1)[-1]
+    parts = name.replace("_", " ").split()
+    return " ".join(p.capitalize() for p in parts) if parts else lock
 
 
-def create_dashboard(meta: dict, by_cam: dict[str, tuple]) -> dict:
-    """Fresh minimal dashboard skeleton with one section of camera cards."""
-    cards: list = [{"type": "heading", "heading": meta.get("view_title", "Камеры")}]
-    for cam in by_cam:
-        cards.append(card_for(cam, by_cam))
-        cards.append(popup_card_for(cam, by_cam))
+def build_cards(cameras: list[dict], locks_only: list[dict]) -> list[dict]:
+    """One district-intercom card per door (grouped by lock), then
+    camera-only cards for lockless cameras, then locks_only cards."""
+    groups: dict[str, list[dict]] = {}
+    order: list[str] = []
+    camera_only: list[dict] = []
+    for cam in cameras:
+        lock = cam["lock"]
+        if lock is None:
+            camera_only.append(cam)
+            continue
+        if lock not in groups:
+            groups[lock] = []
+            order.append(lock)
+        groups[lock].append(cam)
+
+    cards: list[dict] = []
+    for lock in order:
+        cams = groups[lock]
+        first = cams[0]
+        cards.append({
+            "type": CARD_TYPE,
+            "entity": lock,
+            "views": [c["entity"] for c in cams],
+            "image": first["jpg"],
+            "snapshot_file": os.path.basename(first["jpg"]),
+            "title": first["title"],
+        })
+    for cam in camera_only:
+        cards.append({
+            "type": CARD_TYPE,
+            "views": [cam["entity"]],
+            "image": cam["jpg"],
+            "snapshot_file": os.path.basename(cam["jpg"]),
+            "title": cam["title"],
+        })
+    for lo in locks_only:
+        cards.append({
+            "type": CARD_TYPE,
+            "entity": lo["lock"],
+            "views": [],
+            "title": lo["title"],
+        })
+    return cards
+
+
+def create_dashboard(meta: dict, cameras: list[dict], locks_only: list[dict]) -> dict:
+    """Fresh minimal dashboard skeleton with one section of district cards."""
+    cards: list = [{"type": "heading", "heading": meta.get("view_title", "Район")}]
+    cards.extend(build_cards(cameras, locks_only))
     return {
         "version": 1,
         "minor_version": 1,
@@ -147,7 +163,7 @@ def create_dashboard(meta: dict, by_cam: dict[str, tuple]) -> dict:
             "config": {
                 "title": meta.get("title", "Район"),
                 "views": [{
-                    "title": meta.get("view_title", "Камеры"),
+                    "title": meta.get("view_title", "Район"),
                     "path": meta.get("url_path", "district"),
                     "type": "sections",
                     "icon": "mdi:shield-home",
@@ -165,74 +181,113 @@ def _walk(cards: list):
         yield from _walk(c.get("cards", []))
 
 
-def _cam_of(card: dict, by_cam: dict[str, tuple]) -> str | None:
-    """Camera entity of a camera card (any historical form)."""
-    if card.get("type") == "custom:popup-card":
-        return card.get("entity")
+def _legacy_cam_of(card: dict, entities: set[str]) -> str | None:
+    """Camera entity of a legacy v7 camera card (picture-glance / popup-card /
+    button-card with picture), or None if the card is not a known legacy form."""
+    ctype = card.get("type")
+    if ctype == "custom:popup-card":
+        ent = card.get("entity")
+        return ent if ent in entities else None
+    if ctype == "custom:button-card":
+        if not card.get("picture"):
+            return None
+    elif ctype != "picture-glance":
+        return None
     tap = card.get("tap_action") or {}
     if tap.get("action") == "fire-dom-event":
         try:
             content = tap["browser_mod"]["data"]["content"][0]
             if content.get("type") == "vertical-stack":
                 content = content["cards"][0]
-            return content["camera_image"]
+            cam = content["camera_image"]
+            return cam if cam in entities else None
         except (KeyError, IndexError, TypeError):
             return None
-    return tap.get("entity")
+    ent = tap.get("entity")
+    if ent in entities:
+        return ent
+    return None
 
 
-def _is_static_cam_card(card: dict, by_cam: dict[str, tuple]) -> bool:
-    """Только статичные карточки камер (popup-card сюда НЕ входит)."""
-    if card.get("type") == "custom:popup-card":
-        return False
-    if card.get("type") == "custom:button-card":
-        return bool(card.get("picture")) and _cam_of(card, by_cam) in by_cam
-    if card.get("type") != "picture-glance":
-        return False
-    return _cam_of(card, by_cam) in by_cam
-
-
-def regenerate(doc: dict, by_cam: dict[str, tuple]) -> int:
-    """Rebuild static camera cards in-place; normalize to exactly one
-    static + one popup-card per camera (removes older-run duplicates)."""
+def regenerate(doc: dict, cameras: list[dict], locks_only: list[dict]) -> int:
+    """Replace legacy v7 camera cards with the new district-intercom cards and
+    refresh the managed cards from cameras.json. Idempotent: a second run
+    reports 0 changes. Non-district cards are preserved in place."""
+    new_cards = build_cards(cameras, locks_only)
+    by_key = {_card_key(c): c for c in new_cards}
+    placed: set = set()
+    entities = {c["entity"] for c in cameras}
     changed = 0
+
+    def _process(cards: list) -> list:
+        nonlocal changed
+        out: list = []
+        for card in cards:
+            ctype = card.get("type")
+            if ctype == "vertical-stack":
+                card["cards"] = _process(card.get("cards", []))
+                out.append(card)
+                continue
+            if ctype == CARD_TYPE:
+                key = _card_key(card)
+                fresh = by_key.get(key)
+                if fresh is None:
+                    changed += 1
+                    continue  # stale managed card: no longer in cameras.json
+                if key in placed:
+                    changed += 1
+                    continue  # duplicate of an already-placed managed card
+                placed.add(key)
+                if card != fresh:
+                    card = dict(fresh)
+                    changed += 1
+                out.append(card)
+                continue
+            cam = _legacy_cam_of(card, entities)
+            if cam is not None:
+                # legacy v7 card: its group's new card is emitted at the first
+                # legacy occurrence; further legacy cards of the same group
+                # (second camera, popup-card) are dropped.
+                for fresh in new_cards:
+                    key = _card_key(fresh)
+                    if key in placed:
+                        continue
+                    if cam in fresh.get("views", []):
+                        placed.add(key)
+                        out.append(dict(fresh))
+                        break
+                changed += 1
+                continue
+            out.append(card)
+        return out
+
     for view in doc["data"]["config"].get("views", []):
         for section in view.get("sections", []):
-            seen: set = set()
-            new_cards: list = []
-            for card in section.get("cards", []):
-                if card.get("type") == "custom:popup-card":
-                    continue  # пересоберём после статиков
-                if card.get("type") == "vertical-stack":
-                    inner_seen: set = set()
-                    new_inner: list = []
-                    for c in card.get("cards", []):
-                        if c.get("type") == "custom:popup-card":
-                            continue
-                        if _is_static_cam_card(c, by_cam) and (cam := _cam_of(c, by_cam)):
-                            if cam in inner_seen:
-                                changed += 1
-                                continue
-                            inner_seen.add(cam)
-                            new_inner.append(card_for(cam, by_cam))
-                            new_inner.append(popup_card_for(cam, by_cam))
-                            changed += 1
-                        else:
-                            new_inner.append(c)
-                    card["cards"] = new_inner
-                    new_cards.append(card)
-                elif _is_static_cam_card(card, by_cam) and (cam := _cam_of(card, by_cam)):
-                    if cam in seen:
-                        changed += 1
-                        continue
-                    seen.add(cam)
-                    new_cards.append(card_for(cam, by_cam))
-                    new_cards.append(popup_card_for(cam, by_cam))
-                    changed += 1
-                else:
-                    new_cards.append(card)
-            section["cards"] = new_cards
+            section["cards"] = _process(section.get("cards", []))
+
+    # managed cards missing from the dashboard entirely -> append
+    missing = [dict(c) for c in new_cards if _card_key(c) not in placed]
+    if missing:
+        sections = None
+        for view in doc["data"]["config"].get("views", []):
+            if view.get("sections"):
+                sections = view["sections"]
+                break
+        if sections is None:
+            sections = [{"type": "grid", "cards": []}]
+            doc["data"]["config"].setdefault("views", []).append({
+                "title": "Район", "path": "district", "type": "sections",
+                "sections": sections,
+            })
+        sections[-1].setdefault("cards", []).extend(missing)
+        changed += len(missing)
     return changed
+
+
+def _card_key(card: dict) -> tuple:
+    """Stable identity of a district card: its lock, or its first view."""
+    return ("lock", card.get("entity")) if card.get("entity") else \
+           ("view", (card.get("views") or [None])[0])
 
 
 def main() -> None:
@@ -240,25 +295,27 @@ def main() -> None:
     check = "--check" in args
     create = "--create" in args
     cameras_path = args[args.index("--cameras") + 1] if "--cameras" in args else None
-    meta, by_cam = load_cameras(cameras_path)
+    meta, cameras, locks_only = load_cameras(cameras_path)
     skip = {"--check", "--create", "--cameras", cameras_path or ""}
     paths = [a for a in args if a not in skip]
+    n_cards = len(build_cards(cameras, locks_only))
 
     if create:
         out = paths[0] if paths else "/dev/stdout"
         with open(out, "w", encoding="utf-8") as f:
-            json.dump(create_dashboard(meta, by_cam), f, ensure_ascii=False, indent=1)
+            json.dump(create_dashboard(meta, cameras, locks_only), f,
+                      ensure_ascii=False, indent=1)
             f.write("\n")
-        print(f"created dashboard skeleton: {out} ({len(by_cam)} cameras)")
+        print(f"created dashboard skeleton: {out} ({n_cards} cards)")
         return
     if not paths:
         sys.exit("usage: generate_district.py <dashboard.json> [--cameras ...] [--check] | --create <out>")
     path = paths[0]
     doc = json.load(open(path, encoding="utf-8"))
     before = json.dumps(doc, ensure_ascii=False, sort_keys=True)
-    n = regenerate(doc, by_cam)
+    n = regenerate(doc, cameras, locks_only)
     after = json.dumps(doc, ensure_ascii=False, sort_keys=True)
-    print(f"camera cards rebuilt: {n}")
+    print(f"district cards rebuilt: {n}")
     if check:
         print("DRY" if before == after else "CHANGED")
         return

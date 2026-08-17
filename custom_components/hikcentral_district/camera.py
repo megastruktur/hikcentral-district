@@ -51,6 +51,9 @@ class HikDoorCamera(Camera):
         super().__init__()
         self._camera = camera
         self._coordinator = coordinator
+        # Cached snapshot state; refreshed by the refresh_snapshot service.
+        self._last_image: bytes | None = None
+        self._last_snapshot: str | None = None
         # Advertise stream support: stream_source() serves the go2rtc template
         # (or direct RTSP fallback). Without this flag the frontend refuses to
         # open live views (supported_features=0 → no live in cards/popups).
@@ -175,15 +178,23 @@ class HikDoorCamera(Camera):
         """Return the last fetched snapshot JPEG bytes.
 
         This is called by HA's camera entity on the event loop.
-        _last_image is populated by _fetch_snapshot.
+        _last_image is populated by _fetch_snapshot and by the
+        refresh_snapshot service.
         """
-        return getattr(self, "_last_image", None)
+        return self._last_image
 
     @property
     def is_on(self) -> bool:
         """Camera is considered on if it has an RTSP URL (address + credentials)."""
         cam = self._camera
         return bool(cam.address and cam.username and cam.password)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str]:
+        """Expose the last_snapshot timestamp (ISO-8601 UTC) when set."""
+        if self._last_snapshot:
+            return {"last_snapshot": self._last_snapshot}
+        return {}
 
 
 async def async_setup_entry(
@@ -215,11 +226,21 @@ async def async_setup_entry(
             for cam_id in getattr(door, "associated_cameras", [])
         }
 
-    entities = [
-        HikDoorCamera(camera, coordinator, is_doorbell=camera.id in door_camera_ids)
-        for camera in cameras
-        if selected_cameras is None or camera.id in selected_cameras
-    ]
+    entities: list[HikDoorCamera] = []
+    cameras_by_id: dict[str, HikDoorCamera] = {}
+    for camera in cameras:
+        if selected_cameras is not None and camera.id not in selected_cameras:
+            continue
+        entity = HikDoorCamera(
+            camera, coordinator, is_doorbell=camera.id in door_camera_ids
+        )
+        entities.append(entity)
+        cameras_by_id[camera.id] = entity
+
+    # Live entity lookup for the refresh_snapshot service (by camera id).
+    hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})[
+        "cameras_by_id"
+    ] = cameras_by_id
 
     if entities:
         async_add_entities(entities)

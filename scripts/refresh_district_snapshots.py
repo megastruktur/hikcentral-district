@@ -82,7 +82,7 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 - per-camera isolation
             failures.append(f"{cam_id}: {exc}"[:160])
 
-    print(f"refreshed {len(ok)}/{len(CAMERA_FILES)}: {','.join(ok)}")
+    print(f"refreshed {len(ok)}/{len(camera_files)}: {','.join(ok)}")
     for line in failures:
         print(f"  FAIL {line}", file=sys.stderr)
     # offline cameras (e.g. 280/P2B) are not a hard failure

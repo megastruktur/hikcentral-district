@@ -7,9 +7,15 @@
 #   2. browser_mod v3.2.1 (popups) straight from the GitHub zipball
 #   3. the district dashboard: .storage/lovelace.district, GENERATED from
 #      dashboards/cameras.json (gitignored; copy from cameras.example.json)
-#      + the dashboard entry + /browser_mod.js resource
-#   4. (optional, --with-snapshot-automation) the 10-min snapshot refresh:
-#      scripts/refresh_district_snapshots.py + shell_command + automation
+#      + the dashboard entry + Lovelace resources:
+#        /browser_mod.js and /local/district/district-intercom-card.js?v=<ver>
+#      (each registered once, idempotent; <ver> read from manifest.json)
+#   4. one-time snapshot seed: scripts/refresh_district_snapshots.py is copied
+#      to <config>/scripts/, www/snapshots/ is created, and the seeder is run
+#      ONCE (best-effort — it needs the integration configured and
+#      hikcentral_bumblebee installed; on failure the manual command is shown).
+#      There is NO periodic automation anymore: covers refresh on demand via
+#      the card's refresh button.
 #
 # Merge-only .storage semantics: existing config entries / resources /
 # dashboards are never modified or dropped. browser_mod config entry carries
@@ -25,8 +31,7 @@
 #   --check                     dry run: report, change nothing
 #   --stage-only                write artifacts to .install-staging/ inside the
 #                               config dir and stop — apply manually later
-#   --with-snapshot-automation  patch configuration.yaml/automations.yaml
-#   --no-dashboard              skip the dashboard + browser_mod resource
+#   --no-dashboard              skip the dashboard + resource staging
 #   --update-components         replace an EXISTING component dir when its
 #                               version differs (default: warn and skip)
 #   -y, --yes                   skip confirmation
@@ -46,14 +51,14 @@ BROWSER_MOD_REPO="thomasloven/hass-browser_mod"
 BROWSER_MOD_VERSION="v3.2.1"
 
 CONFIG_DIR=""
-DRY_RUN=0 STAGE_ONLY=0 WITH_SNAPSHOTS=0 NO_DASHBOARD=0 ASSUME_YES=0 UPDATE_COMPONENTS=0
+DRY_RUN=0 STAGE_ONLY=0 NO_DASHBOARD=0 ASSUME_YES=0 UPDATE_COMPONENTS=0
 
 log()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
 warn() { printf '\033[1;33mWARN:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mFATAL:\033[0m %s\n' "$*" >&2; exit 1; }
 
-usage() { sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 CONFIG_DIR=""
 while [[ $# -gt 0 ]]; do
@@ -61,7 +66,6 @@ while [[ $# -gt 0 ]]; do
     --config) CONFIG_DIR="${2:?--config needs a directory}"; shift 2 ;;
     --check)                    DRY_RUN=1; shift ;;
     --stage-only)               STAGE_ONLY=1; shift ;;
-    --with-snapshot-automation) WITH_SNAPSHOTS=1; shift ;;
     --no-dashboard)             NO_DASHBOARD=1; shift ;;
     --update-components)        UPDATE_COMPONENTS=1; shift ;;
     --yes|-y)                   ASSUME_YES=1; shift ;;
@@ -195,7 +199,8 @@ PY
 
 # ------------------------------------------------------------- storage -----
 stage_storage() {
-  (( DRY_RUN )) && { info "WOULD stage .storage (config entry, resource, dashboard, lovelace.district)"; return 0; }
+  local card_version="$1"
+  (( DRY_RUN )) && { info "WOULD stage .storage (config entry, resources, dashboard, lovelace.district)"; return 0; }
   log "staging .storage files (merge-only) in $CONFIG_DIR/.install-staging"
   local district_json=""
   if [[ -f "$SCRIPT_DIR/dashboards/cameras.json" ]]; then
@@ -204,12 +209,12 @@ stage_storage() {
       --cameras "$SCRIPT_DIR/dashboards/cameras.json" >/dev/null || district_json=""
   fi
   (( ${#district_json} )) || info "no dashboards/cameras.json -> dashboard staging skipped"
-  python3 - "$CONFIG_DIR" "$district_json" <<'PY'
+  python3 - "$CONFIG_DIR" "$district_json" "$card_version" <<'PY'
 import copy, json, os, sys
 from datetime import datetime, timezone
 from uuid import uuid4
 
-config_dir, district_json = sys.argv[1], sys.argv[2]
+config_dir, district_json, card_version = sys.argv[1], sys.argv[2], sys.argv[3]
 storage_dir = os.path.join(config_dir, ".storage")
 stage_dir = os.path.join(config_dir, ".install-staging")
 os.makedirs(stage_dir, exist_ok=True)
@@ -274,6 +279,15 @@ if not any(str(i.get("url", "")).startswith("/browser_mod.js") for i in items):
     print("    + lovelace_resources /browser_mod.js")
 else:
     print("    SKIP lovelace_resources /browser_mod.js (already present)")
+# district-intercom-card: registered ONCE — an existing entry is kept as-is
+# (whatever its ?v=), so a re-run never duplicates or rewrites the resource.
+CARD_URL = "/local/district/district-intercom-card.js"
+if not any(str(i.get("url", "")).startswith(CARD_URL) for i in items):
+    items.append({"url": f"{CARD_URL}?v={card_version}", "type": "module",
+                  "id": uuid4().hex})
+    print(f"    + lovelace_resources {CARD_URL}?v={card_version}")
+else:
+    print(f"    SKIP lovelace_resources {CARD_URL} (already present)")
 save("lovelace_resources", doc)
 
 doc = load("lovelace_dashboards", envelope("lovelace_dashboards", {"items": []}))
@@ -316,13 +330,15 @@ apply_storage() {
   fi
 }
 
-# ------------------------------------------------- snapshot automation -----
-snapshot_automation() {
-  local cfg="$CONFIG_DIR/configuration.yaml" aut="$CONFIG_DIR/automations.yaml"
+# ----------------------------------------------------- snapshot seed -------
+# One-time seed of www/snapshots/*.jpg (covers for the district cards).
+# The old 10-minute automation is gone: covers refresh on demand via the
+# card's refresh button (hikcentral_district.refresh_snapshot service).
+seed_snapshots() {
   local script_src="$SCRIPT_DIR/scripts/refresh_district_snapshots.py"
   local script_dst="$CONFIG_DIR/scripts/refresh_district_snapshots.py"
 
-  (( DRY_RUN )) && { info "WOULD copy the snapshot script + patch configuration.yaml/automations.yaml"; return 0; }
+  (( DRY_RUN )) && { info "WOULD copy the snapshot seeder to scripts/ + run it once (best-effort)"; return 0; }
 
   mkdir -p "$CONFIG_DIR/scripts" "$CONFIG_DIR/www/snapshots"
   if [[ -f "$script_dst" ]] && cmp -s "$script_src" "$script_dst"; then
@@ -332,54 +348,16 @@ snapshot_automation() {
     cp "$script_src" "$script_dst"
   fi
 
-  if [[ ! -f "$cfg" ]]; then
-    log "creating minimal configuration.yaml"
-    cat > "$cfg" <<'YAML'
-# Loads default set of integrations. Do not remove.
-default_config:
-
-automation: !include automations.yaml
-script: !include scripts.yaml
-scene: !include scenes.yaml
-
-# Static jpg snapshots for the district dashboard camera cards.
-shell_command:
-  refresh_district_snapshots: python3 /config/scripts/refresh_district_snapshots.py
-YAML
-    : > "$CONFIG_DIR/scripts.yaml"
-    : > "$CONFIG_DIR/scenes.yaml"
-  elif grep -q "refresh_district_snapshots" "$cfg"; then
-    info "SKIP configuration.yaml shell_command (already present)"
-  elif grep -qE "^shell_command:" "$cfg"; then
-    die "configuration.yaml has a shell_command: block without our key — add refresh_district_snapshots manually"
+  log "running the snapshot seeder once (best-effort)"
+  if python3 "$script_dst"; then
+    info "snapshot seed complete — covers are in $CONFIG_DIR/www/snapshots/"
   else
-    log "appending shell_command block to configuration.yaml"
-    cat >> "$cfg" <<'YAML'
-
-# Static jpg snapshots for the district dashboard camera cards.
-shell_command:
-  refresh_district_snapshots: python3 /config/scripts/refresh_district_snapshots.py
-YAML
-  fi
-
-  [[ -f "$aut" ]] || : > "$aut"
-  if grep -q "district_snapshots_refresh_20260816" "$aut"; then
-    info "SKIP automations.yaml (district snapshots refresh already present)"
-  else
-    log "appending 'district snapshots refresh' automation"
-    cat >> "$aut" <<'YAML'
-# Static jpg snapshots for the district dashboard camera cards (10 min)
-- id: district_snapshots_refresh_20260816
-  alias: district snapshots refresh
-  description: Refreshes /config/www/snapshots/*.jpg used by the district dashboard
-  trigger:
-  - platform: time_pattern
-    minutes: /10
-  condition: []
-  action:
-  - service: shell_command.refresh_district_snapshots
-  mode: single
-YAML
+    warn "snapshot seed failed (expected before the integration is configured"
+    warn "and hikcentral_bumblebee is installed). Run it manually later:"
+    warn "  inside the HA container: docker exec homeassistant python3 /config/scripts/refresh_district_snapshots.py"
+    warn "  or on this host:         python3 $script_dst"
+    warn "Covers fall back to placeholders until then; each card also has a"
+    warn "refresh button once the integration is up."
   fi
 }
 
@@ -402,8 +380,13 @@ copy_component "$SCRIPT_DIR/custom_components/hikcentral_district" \
                "hikcentral_district"
 install_browser_mod
 
+# Card resource URL carries the integration version (cache-bust); read it
+# from manifest.json at runtime — never hardcoded.
+CARD_VERSION="$(component_version "$SCRIPT_DIR/custom_components/hikcentral_district")"
+[[ -n "$CARD_VERSION" ]] || die "cannot read version from custom_components/hikcentral_district/manifest.json"
+
 if (( ! NO_DASHBOARD )); then
-  stage_storage
+  stage_storage "$CARD_VERSION"
   if (( STAGE_ONLY )); then
     log "stage-only: artifacts in $CONFIG_DIR/.install-staging — copy them into .storage/ manually, then restart HA"
     exit 0
@@ -413,9 +396,7 @@ else
   info "--no-dashboard: skipping .storage staging"
 fi
 
-if (( WITH_SNAPSHOTS )); then
-  snapshot_automation
-fi
+seed_snapshots
 
 log "done. Next steps:"
 echo "  1. restart Home Assistant"
@@ -424,4 +405,7 @@ echo "  3. configure hikcentral_district (Settings > Devices > Add Integration"
 echo "     'HikCentral District') unless the installer seeded it from HIK_* env"
 echo "  4. open http://<host>:8123/district — if popups do not open, enable"
 echo "     'Register' once in the Browser Mod panel"
-echo "  5. live streams (optional): see deploy/ for the go2rtc sidecar"
+echo "  5. snapshot covers: seeded once at install; refresh per-card via the"
+echo "     card refresh button (no periodic automation). Manual re-seed:"
+echo "     docker exec homeassistant python3 /config/scripts/refresh_district_snapshots.py"
+echo "  6. live streams (optional): see deploy/ for the go2rtc sidecar"

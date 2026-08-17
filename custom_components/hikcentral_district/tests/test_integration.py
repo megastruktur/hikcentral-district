@@ -45,7 +45,7 @@ from custom_components.hikcentral_district.sensor import (
 
 
 @pytest.fixture
-def real_hass():
+def real_hass(tmp_path):
     """Minimal HomeAssistant mock that exercises the real integration code paths."""
     hass = MagicMock()
     # HA 2026.6.4 requires the frame helper to be set up before
@@ -73,6 +73,11 @@ def real_hass():
 
     hass.async_add_executor_job = async_add_executor_job
     hass.async_create_task = MagicMock(return_value=MagicMock())
+    # Real path resolver so sync_frontend_js takes its normal path
+    # (writes into the per-test tmp dir, never the host config dir).
+    hass.config.path = MagicMock(
+        side_effect=lambda *parts: str(tmp_path.joinpath("config", *parts))
+    )
     return hass
 
 
@@ -140,11 +145,15 @@ def integration_mock_client():
     async def mock_door_action(door_id, action):
         return None
 
-    client.get_door_elements = AsyncMock(mock_get_door_elements)
-    client.get_door = AsyncMock(mock_get_door)
-    client.get_camera_elements = AsyncMock(mock_get_camera_elements)
-    client.get_access_controllers = AsyncMock(mock_get_access_controllers)
-    client.door_action = AsyncMock(mock_door_action)
+    # NOTE: AsyncMock(fn) would treat fn as *spec*, not behavior —
+    # use side_effect so the mocks actually return the fixtures above.
+    client.get_door_elements = AsyncMock(side_effect=mock_get_door_elements)
+    client.get_door = AsyncMock(side_effect=mock_get_door)
+    client.get_camera_elements = AsyncMock(side_effect=mock_get_camera_elements)
+    client.get_access_controllers = AsyncMock(
+        side_effect=mock_get_access_controllers
+    )
+    client.door_action = AsyncMock(side_effect=mock_door_action)
 
     return client
 
@@ -257,6 +266,37 @@ async def test_async_unload_entry_calls_async_unload(
     real_hass.config_entries.async_unload_platforms.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_setup_syncs_frontend_js_when_present(
+    real_hass,
+    integration_config_entry,
+    integration_mock_client,
+):
+    """Setup copies the bundled card into <config>/www/district/ when present.
+
+    The JS is produced by a separate lane; when absent, setup must still
+    succeed and simply skip the copy.
+    """
+    from pathlib import Path
+
+    import custom_components.hikcentral_district as integration
+    from custom_components.hikcentral_district import FRONTEND_JS_NAME
+
+    src = Path(integration.__file__).parent / "frontend" / FRONTEND_JS_NAME
+
+    await setup_integration(
+        real_hass, integration_config_entry, integration_mock_client
+    )
+
+    dest = Path(
+        real_hass.config.path("www", "district", FRONTEND_JS_NAME)
+    )
+    if src.is_file():
+        assert dest.read_bytes() == src.read_bytes()
+    else:
+        assert not dest.exists()
+
+
 # ---------------------------------------------------------------------
 # Lock platform — real entity creation
 # ---------------------------------------------------------------------
@@ -347,27 +387,52 @@ async def test_camera_platform_setup_does_not_raise_attribute_error(
     integration_config_entry,
     integration_mock_client,
 ):
-    """camera async_setup_entry does not raise AttributeError.
+    """camera async_setup_entry creates HikDoorCamera entities without AttributeError."""
+    from custom_components.hikcentral_district.camera import HikDoorCamera
 
-    We verify no AttributeError is raised during setup (the entities are
-    created and filtered, then passed to async_add_entities). The capture
-    callback limitation in the mock means we only assert the call happened.
-    """
     await setup_integration(
         real_hass, integration_config_entry, integration_mock_client
     )
 
-    # Verify the platform code path doesn't raise AttributeError
-    # (async_add_entities is a no-op MagicMock in this test environment)
-    added_entities_ref = []
+    added_entities = []
 
-    async def capture_async(entities):
-        added_entities_ref.extend(entities)
+    def capture(entities):
+        added_entities.extend(entities)
 
-    # The camera setup calls hass.async_add_executor_job then async_add_entities.
-    # If no AttributeError is raised, the test passes.
-    await camera_setup(real_hass, integration_config_entry, capture_async)
-    # No AttributeError means success.
+    await camera_setup(real_hass, integration_config_entry, capture)
+
+    # One camera ("1") is discovered by integration_mock_client
+    assert len(added_entities) == 1
+    assert isinstance(added_entities[0], HikDoorCamera)
+
+
+@pytest.mark.asyncio
+async def test_camera_platform_setup_stores_cameras_by_id(
+    real_hass,
+    integration_config_entry,
+    integration_mock_client,
+):
+    """camera async_setup_entry stores cameras_by_id for refresh_snapshot."""
+    from custom_components.hikcentral_district.camera import HikDoorCamera
+
+    await setup_integration(
+        real_hass, integration_config_entry, integration_mock_client
+    )
+
+    added_entities = []
+
+    def capture(entities):
+        added_entities.extend(entities)
+
+    await camera_setup(real_hass, integration_config_entry, capture)
+
+    entry_data = real_hass.data[DOMAIN][integration_config_entry.entry_id]
+    assert "cameras_by_id" in entry_data
+    cameras_by_id = entry_data["cameras_by_id"]
+    # One camera ("1") is discovered by integration_mock_client
+    assert set(cameras_by_id.keys()) == {"1"}
+    assert isinstance(cameras_by_id["1"], HikDoorCamera)
+    assert cameras_by_id["1"] is added_entities[0]
 
 
 # ---------------------------------------------------------------------

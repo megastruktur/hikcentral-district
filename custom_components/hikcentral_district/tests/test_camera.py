@@ -70,6 +70,18 @@ class TestHikDoorCamera:
         """unique_id includes the camera id."""
         assert f"hikcentral_district.camera.{mock_camera.id}" == entity.unique_id
 
+    def test_last_snapshot_initially_none(self, entity):
+        """_last_snapshot starts unset and extra_state_attributes is empty."""
+        assert entity._last_snapshot is None
+        assert entity.extra_state_attributes == {}
+
+    def test_extra_state_attributes_exposes_last_snapshot(self, entity):
+        """extra_state_attributes exposes last_snapshot once set."""
+        entity._last_snapshot = "2026-08-17T08:00:00+00:00"
+        assert entity.extra_state_attributes == {
+            "last_snapshot": "2026-08-17T08:00:00+00:00"
+        }
+
     def test_entity_picture_not_rtsp_url(self, entity):
         """entity_picture does not return an rtsp:// URL (removed from base Camera)."""
         # The rtsp:// entity_picture override was removed.

@@ -62,12 +62,14 @@ class TestHikCentralDistrictCoordinator:
 
 
 class TestExtraDoorIds:
-    """Test merging of hardcoded EXTRA_DOOR_IDS into coordinator data.
+    """Test merging of the extra_door_ids option into coordinator data.
 
-    EXTRA_DOOR_IDS = [999, 1002, 1007, 536, 538] — doors that exist on the
-    district's HikCentral server but are absent from the DoorElements list
-    response. They are fetched directly by ID and merged (dedup by ID).
+    The ``extra_door_ids`` option (list of strings) holds doors that exist on
+    the HikCentral server but are absent from the DoorElements list response.
+    They are fetched directly by ID and merged (dedup by ID).
     """
+
+    EXTRA_IDS = ["999", "1002", "1007", "536", "538"]
 
     @staticmethod
     def _make_door(door_id):
@@ -95,7 +97,11 @@ class TestExtraDoorIds:
     async def test_extra_door_ids_merged_when_absent_from_list(
         self, hass, mock_config_entry
     ):
-        """Extra door IDs are fetched directly and merged when not in the list."""
+        """Extra door IDs from the option are fetched directly and merged."""
+        mock_config_entry.options = {
+            **mock_config_entry.options,
+            "extra_door_ids": self.EXTRA_IDS,
+        }
         client = self._make_client(
             listed_ids=["996"],
             get_door_side_effect=lambda door_id: self._make_door(door_id),
@@ -118,7 +124,11 @@ class TestExtraDoorIds:
     async def test_extra_door_ids_deduped_when_in_list(
         self, hass, mock_config_entry
     ):
-        """A door present in both the list and EXTRA_DOOR_IDS is fetched once."""
+        """A door present in both the list and extra_door_ids is fetched once."""
+        mock_config_entry.options = {
+            **mock_config_entry.options,
+            "extra_door_ids": self.EXTRA_IDS,
+        }
         client = self._make_client(
             listed_ids=["996", "999"],
             get_door_side_effect=lambda door_id: self._make_door(door_id),
@@ -147,6 +157,10 @@ class TestExtraDoorIds:
         self, hass, mock_config_entry
     ):
         """A failing extra-door fetch is skipped without breaking the update."""
+        mock_config_entry.options = {
+            **mock_config_entry.options,
+            "extra_door_ids": self.EXTRA_IDS,
+        }
 
         def get_door_side_effect(door_id):
             if str(door_id) == "1007":
@@ -172,6 +186,50 @@ class TestExtraDoorIds:
         assert set(result.keys()) == {"996", "999", "1002", "536", "538"}
         assert "1007" not in result
 
+    async def test_extra_door_ids_coerced_to_str(self, hass, mock_config_entry):
+        """Non-string extra door IDs (e.g. int) are coerced to str keys."""
+        mock_config_entry.options = {
+            **mock_config_entry.options,
+            "extra_door_ids": [999, 1002],
+        }
+        client = self._make_client(
+            listed_ids=["996"],
+            get_door_side_effect=lambda door_id: self._make_door(door_id),
+        )
+
+        from hikcentral_district import HikCentralDistrictDataUpdateCoordinator
+
+        coordinator = HikCentralDistrictDataUpdateCoordinator(
+            hass=hass,
+            client=client,
+            entry=mock_config_entry,
+        )
+
+        result = await coordinator._async_update_data()
+
+        assert set(result.keys()) == {"996", "999", "1002"}
+
+    async def test_no_extra_door_ids_option_fetches_no_extras(
+        self, hass, mock_config_entry
+    ):
+        """Without the option only discovered doors are fetched."""
+        client = self._make_client(
+            listed_ids=["996"],
+            get_door_side_effect=lambda door_id: self._make_door(door_id),
+        )
+
+        from hikcentral_district import HikCentralDistrictDataUpdateCoordinator
+
+        coordinator = HikCentralDistrictDataUpdateCoordinator(
+            hass=hass,
+            client=client,
+            entry=mock_config_entry,
+        )
+
+        result = await coordinator._async_update_data()
+
+        assert set(result.keys()) == {"996"}
+
 
 class TestHikCentralDistrictServices:
     """Test service registration."""
@@ -182,12 +240,13 @@ class TestHikCentralDistrictServices:
 
         await async_register_services(hass, mock_client)
 
-        call_args = hass.services.async_register.call_args_list[-1]
-        args, kwargs = call_args
-        domain, service, handler = args
-        schema = kwargs.get("schema")
-        assert domain == "hikcentral_district"
-        assert service == "door_action"
+        registered = [
+            call
+            for call in hass.services.async_register.call_args_list
+            if call[0][0] == "hikcentral_district" and call[0][1] == "door_action"
+        ]
+        assert len(registered) == 1
+        schema = registered[0][1].get("schema")
         # Schema must be a vol.Schema, not None
         assert schema is not None
         assert callable(schema)

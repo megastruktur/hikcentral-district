@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import voluptuous as vol
@@ -53,6 +54,7 @@ class HikCentralDistrictOptionsFlow(config_entries.OptionsFlow):
         scan_interval = current_options.get(
             "scan_interval", self._entry.data.get("scan_interval", 30)
         )
+        extra_door_ids = current_options.get("extra_door_ids", [])
 
         schema_dict: dict[vol.Marker, Any] = {}
         if doors:
@@ -78,8 +80,28 @@ class HikCentralDistrictOptionsFlow(config_entries.OptionsFlow):
                 description="go2rtc RTSP URL with {id} placeholder, e.g. rtsp://127.0.0.1:18554/hik_cam_{id}",
             )
         ] = str
+        # Doors absent from the DoorElements list response; fetched directly
+        # by ID. Free-text (comma/space separated) — they are not in the
+        # discovered list, so a multi-select cannot offer them.
+        schema_dict[
+            vol.Optional(
+                "extra_door_ids",
+                default=", ".join(str(door_id) for door_id in extra_door_ids),
+                description="Door IDs missing from discovery, comma/space separated, e.g. 999, 1002, 1007",
+            )
+        ] = str
 
         if user_input is not None:
+            # Parse the free-text extra_door_ids into a list of strings.
+            raw_extra_ids = str(user_input.get("extra_door_ids", ""))
+            user_input = {
+                **user_input,
+                "extra_door_ids": [
+                    part
+                    for part in (p.strip() for p in re.split(r"[,\s]+", raw_extra_ids))
+                    if part
+                ],
+            }
             return self.async_create_entry(title="", data=user_input)
 
         return self.async_show_form(

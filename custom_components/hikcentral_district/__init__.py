@@ -7,7 +7,10 @@ Exposes locks, binary sensors, cameras, and diagnostic sensors.
 from __future__ import annotations
 
 import logging
+import os
+import re
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
@@ -15,19 +18,24 @@ from hikcentral_bumblebee import BumblebeeClient, DoorElement
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_URL, CONF_USERNAME, CONF_VERIFY_SSL
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
 )
+from homeassistant.util import dt as dt_util
 
-from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, EXTRA_DOOR_IDS, PLATFORMS
+from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, PLATFORMS
 
 _LOGGER = logging.getLogger(__name__)
 
 type HikCentralDistrictConfigEntry = ConfigEntry[
     HikCentralDistrictDataUpdateCoordinator
 ]
+
+#: File name of the Lovelace card shipped inside the integration package.
+FRONTEND_JS_NAME = "district-intercom-card.js"
 
 
 # Service schema — door_id: str, action: int 1..4
@@ -38,15 +46,58 @@ _SERVICE_SCHEMA = vol.Schema(
     }
 )
 
+# Service schema — entity_id: camera entity, filename: optional target name
+_REFRESH_SNAPSHOT_SCHEMA = vol.Schema(
+    {
+        vol.Required("entity_id"): str,
+        vol.Optional("filename"): str,
+    }
+)
+
+
+def sync_frontend_js(hass: HomeAssistant, src: os.PathLike | None = None) -> bool:
+    """Idempotently copy the intercom card JS into ``<config>/www/district/``.
+
+    Content-based: the file is only written when the destination is missing
+    or differs from the bundled source. Blocking I/O — call via
+    ``hass.async_add_executor_job`` from the event loop.
+
+    Returns:
+        True when the file was written, False when skipped (source missing —
+        the card is produced by a separate build lane — or already identical).
+    """
+    if src is None:
+        src = Path(__file__).parent / "frontend" / FRONTEND_JS_NAME
+    src = Path(src)
+    dest = Path(hass.config.path("www", "district", FRONTEND_JS_NAME))
+
+    if not src.is_file():
+        _LOGGER.warning(
+            "Frontend card %s not found; skipping www sync (retry on next setup)",
+            src,
+        )
+        return False
+
+    data = src.read_bytes()
+    if dest.is_file() and dest.read_bytes() == data:
+        return False
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.parent / f".{dest.name}.tmp"
+    tmp.write_bytes(data)
+    os.replace(tmp, dest)
+    _LOGGER.info("Synced frontend card %s -> %s", src, dest)
+    return True
+
 
 class HikCentralDistrictDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """DataUpdateCoordinator for HikCentral District.
 
     Poll interval is configurable via scan_interval option.
     On each poll: discover doors via the DoorElements list call, fetch
-    per-door status, and merge the hardcoded EXTRA_DOOR_IDS (fetched
-    directly by ID, deduped by ID). Also updates camera and controller
-    counts in-place.
+    per-door status, and merge the ``extra_door_ids`` option (door IDs the
+    list call does not return; fetched directly by ID, deduped by ID).
+    Also updates camera and controller counts in-place.
     """
 
     def __init__(
@@ -83,9 +134,9 @@ class HikCentralDistrictDataUpdateCoordinator(DataUpdateCoordinator[dict[str, An
         """Fetch all door statuses and system counts from HikCentral.
 
         Doors are discovered via the DoorElements list call; additionally,
-        the hardcoded EXTRA_DOOR_IDS are fetched directly by ID and merged
-        into the result (dedup by ID). A failed extra-door fetch is logged
-        and skipped — it never breaks the whole update.
+        the door IDs from the ``extra_door_ids`` option are fetched directly
+        by ID and merged into the result (dedup by ID). A failed extra-door
+        fetch is logged and skipped — it never breaks the whole update.
 
         Returns:
             dict keyed by door id, value is DoorElement with full status.
@@ -102,9 +153,11 @@ class HikCentralDistrictDataUpdateCoordinator(DataUpdateCoordinator[dict[str, An
                 )
                 result[door.id] = full_door
 
-            # Merge extra door IDs that the list call does not return but that
-            # exist on this district's server (direct GET by ID works).
-            for extra_id in EXTRA_DOOR_IDS:
+            # Merge extra door IDs (user option) that the list call does not
+            # return but that exist on the server (direct GET by ID works).
+            # Read on every poll so option changes apply without a reload.
+            extra_ids = self.config_entry.options.get("extra_door_ids", [])
+            for extra_id in extra_ids:
                 key = str(extra_id)
                 if key in result:
                     continue
@@ -136,20 +189,88 @@ class HikCentralDistrictDataUpdateCoordinator(DataUpdateCoordinator[dict[str, An
             raise UpdateFailed(f"HikCentral API error: {err}") from err
 
 
+def _sanitize_snapshot_filename(filename: str) -> str:
+    """Sanitize a snapshot filename to [A-Za-z0-9._-] and force a .jpg suffix."""
+    sanitized = re.sub(r"[^A-Za-z0-9._-]", "-", filename)
+    if not sanitized.lower().endswith(".jpg"):
+        sanitized += ".jpg"
+    return sanitized
+
+
 async def async_register_services(hass: HomeAssistant, client: BumblebeeClient) -> None:
-    """Register the door_action service."""
+    """Register the door_action and refresh_snapshot services (once each)."""
 
     async def door_action_service(call: Any) -> None:
         door_id = str(call.data.get("door_id", ""))
         action = int(call.data.get("action", 1))
         await hass.async_add_executor_job(client.door_action, door_id, action)
 
-    hass.services.async_register(
-        DOMAIN,
-        "door_action",
-        door_action_service,
-        schema=_SERVICE_SCHEMA,
-    )
+    if not hass.services.has_service(DOMAIN, "door_action"):
+        hass.services.async_register(
+            DOMAIN,
+            "door_action",
+            door_action_service,
+            schema=_SERVICE_SCHEMA,
+        )
+
+    async def refresh_snapshot_service(call: Any) -> None:
+        entity_id = str(call.data["entity_id"])
+        filename = str(call.data.get("filename") or "")
+        if not filename:
+            # Default: entity_id without the domain + ".jpg"
+            filename = entity_id.split(".", 1)[1] + ".jpg"
+        filename = _sanitize_snapshot_filename(filename)
+
+        # Resolve entity_id -> unique_id via the entity registry. HikCentral
+        # camera unique_ids look like "hikcentral_district.camera.<camera_id>".
+        registry = er.async_get(hass)
+        reg_entry = registry.async_get(entity_id)
+        unique_id = getattr(reg_entry, "unique_id", None) if reg_entry else None
+        prefix = f"{DOMAIN}.camera."
+        if not unique_id or not unique_id.startswith(prefix):
+            raise HomeAssistantError(
+                f"Unknown or non-HikCentral camera entity: {entity_id}"
+            )
+        camera_id = unique_id[len(prefix) :]
+
+        # Find the live camera entity instance across all config entries.
+        entity = None
+        for entry_data in hass.data.get(DOMAIN, {}).values():
+            if isinstance(entry_data, dict):
+                entity = entry_data.get("cameras_by_id", {}).get(camera_id)
+                if entity is not None:
+                    break
+        if entity is None:
+            raise HomeAssistantError(
+                f"HikCentral camera {camera_id} ({entity_id}) is not loaded"
+            )
+
+        data = await entity.async_request_snapshot()
+        if not data:
+            raise HomeAssistantError(
+                f"Snapshot returned no data for {entity_id}; file not written"
+            )
+
+        def _write_snapshot() -> None:
+            snap_dir = Path(hass.config.path("www", "snapshots"))
+            snap_dir.mkdir(parents=True, exist_ok=True)
+            tmp = snap_dir / f".{filename}.tmp"
+            tmp.write_bytes(data)
+            os.replace(tmp, snap_dir / filename)
+
+        await hass.async_add_executor_job(_write_snapshot)
+
+        entity._last_image = data  # noqa: SLF001 — same component's cache
+        entity._last_snapshot = dt_util.utcnow().isoformat()  # noqa: SLF001
+        entity.async_write_ha_state()
+
+    if not hass.services.has_service(DOMAIN, "refresh_snapshot"):
+        hass.services.async_register(
+            DOMAIN,
+            "refresh_snapshot",
+            refresh_snapshot_service,
+            schema=_REFRESH_SNAPSHOT_SCHEMA,
+        )
 
 
 async def async_setup_entry(
@@ -182,9 +303,18 @@ async def async_setup_entry(
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Register door_action service so it's available immediately (once only).
-    if not hass.services.has_service(DOMAIN, "door_action"):
-        await async_register_services(hass, client)
+    # Register services so they're available immediately. Each service is
+    # guarded by has_service inside async_register_services (registered once
+    # per HA instance, regardless of how many entries are set up).
+    await async_register_services(hass, client)
+
+    # Sync the Lovelace card JS into <config>/www/district/ (idempotent).
+    # Must never break setup — the JS file may be absent (built by another
+    # lane) and www/ may not exist yet.
+    try:
+        await hass.async_add_executor_job(sync_frontend_js, hass)
+    except Exception:  # noqa: BLE001 — JS sync must never break setup
+        _LOGGER.exception("Failed to sync district intercom card JS")
 
     return True
 

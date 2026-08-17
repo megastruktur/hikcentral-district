@@ -19,3 +19,25 @@ door_action:
           max: 4
           step: 1
           mode: box
+
+refresh_snapshot:
+  description: >-
+    Fetch a fresh snapshot from a HikCentral camera and write it atomically
+    to <config>/www/snapshots/<filename>. Updates the camera entity image
+    cache and its last_snapshot attribute (ISO-8601 UTC).
+  fields:
+    entity_id:
+      description: The HikCentral camera entity to snapshot.
+      example: "camera.mr5_p2a"
+      required: true
+      selector:
+        entity:
+          domain: camera
+    filename:
+      description: >-
+        Target file name inside www/snapshots/. Defaults to the entity_id
+        without the domain plus ".jpg" (e.g. mr5_p2a.jpg).
+      example: "mr5-p2a.jpg"
+      required: false
+      selector:
+        text:
