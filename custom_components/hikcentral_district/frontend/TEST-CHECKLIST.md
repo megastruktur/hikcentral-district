@@ -1,6 +1,6 @@
 # district-intercom-card — manual test checklist
 
-Run on a live Home Assistant after the integration (0.6.0+) is installed via
+Run on a live Home Assistant after the integration (0.6.2+) is installed via
 HACS and the Lovelace resource is registered
 (`/local/district/district-intercom-card.js?v=<version>`, JavaScript Module).
 
@@ -20,7 +20,7 @@ Conventions used below:
       with no changes shows a friendly "Nothing configured yet" state, not an
       error card.
 - [ ] Console shows one info line
-      `district-intercom-card v0.6.0` and no red errors from this file.
+      `district-intercom-card v0.6.2` and no red errors from this file.
 - [ ] Card follows the active theme: switch HA to dark mode — card background,
       text, and borders follow (no white card stuck on a dark dashboard).
 
@@ -67,6 +67,8 @@ Config with a real lock: `entity: lock.Y`.
 Config with at least one streaming camera view.
 
 - [ ] Tap the cover (not the buttons): a browser_mod popup opens.
+- [ ] DevTools → WebSocket frames shows a `browser_mod/popup` call (browser_mod
+      3.x service name — NOT `show_popup`) with `title` and `content` fields.
 - [ ] Popup title matches the card title.
 - [ ] Popup shows THIS card in live mode: live video of the first view
       (`camera_view: live`), the Open button underneath, and a vertical column
@@ -171,4 +173,5 @@ Known interpretations of the frozen spec (see Phase 2 lane report):
   way "refresh updates the cover" is observable without a configured image.
 - more-info fallback targets the active camera; if the card has no views it
   targets the lock entity instead.
-- The popup is requested with `size: "wide"` so the view column fits.
+- The popup uses browser_mod 3.x's `browser_mod/popup` service with only
+  schema fields (`title`, `content`) — no `size`, which doesn't exist in 3.x.

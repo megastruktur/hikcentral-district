@@ -15,8 +15,15 @@ from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig
 from .const import DOMAIN
 
 
-class HikCentralDistrictOptionsFlow(config_entries.OptionsFlow):
-    """Options flow for hikcentral_district — door/camera filter + scan interval."""
+class HikCentralDistrictOptionsFlow(config_entries.OptionsFlowWithReload):
+    """Options flow for hikcentral_district — door/camera filter + scan interval.
+
+    Subclasses OptionsFlowWithReload (automatic_reload = True) so saving
+    options schedules a config-entry reload — without it HA keeps the
+    coordinator/platforms running on stale options until a manual reload.
+    Safe here: the integration registers no config-entry update listeners
+    (which would conflict with OptionsFlowWithReload).
+    """
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._entry = config_entry

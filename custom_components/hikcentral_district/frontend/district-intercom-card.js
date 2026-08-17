@@ -29,7 +29,7 @@
  *   - device: resolved to a lock entity via the entity registry websocket.
  */
 
-const VERSION = "0.6.0";
+const VERSION = "0.6.2";
 const CARD_TAG = "district-intercom-card";
 const EDITOR_TAG = "district-intercom-card-editor";
 const SNAPSHOT_BASE = "/local/snapshots/";
@@ -900,15 +900,16 @@ class DistrictIntercomCard extends HTMLElement {
       live: true
     });
 
+    // browser_mod 3.x registers `browser_mod/popup` (not `show_popup`).
+    // Only pass fields from its schema: unknown keys risk rejection.
     const services = this._hass.services || {};
     const available = Boolean(
-      services.browser_mod && services.browser_mod.show_popup
+      services.browser_mod && services.browser_mod.popup
     );
     if (available) {
       try {
-        await this._hass.callService("browser_mod", "show_popup", {
+        await this._hass.callService("browser_mod", "popup", {
           title: title || "",
-          size: "wide",
           content
         });
         return;

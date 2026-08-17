@@ -218,3 +218,34 @@ class TestSchemaSerialization:
         validated = result["data_schema"]({})
         assert validated["selected_doors"] == ["996"]
         assert _marker_default(result["data_schema"], "selected_doors") == ["996"]
+
+
+class TestAutoReload:
+    """Saving options must schedule a config-entry reload (live bug: it did not).
+
+    HA's OptionsFlowManager.async_finish_flow only auto-reloads when the flow
+    is an OptionsFlowWithReload with automatic_reload True (and the entry has
+    no update listeners). Assert we opt in.
+    """
+
+    def test_flow_is_options_flow_with_reload(self, mock_config_entry):
+        """The flow subclasses OptionsFlowWithReload with automatic_reload True."""
+        from homeassistant import config_entries
+
+        flow = HikCentralDistrictOptionsFlow(mock_config_entry)
+
+        assert isinstance(flow, config_entries.OptionsFlowWithReload)
+        assert flow.automatic_reload is True
+
+    def test_integration_registers_no_update_listeners(self):
+        """OptionsFlowWithReload conflicts with update listeners; assert none.
+
+        The reload path raises ValueError if entry.update_listeners is set, so
+        the integration must not register config-entry update listeners.
+        """
+        import inspect
+
+        import custom_components.hikcentral_district as integration
+
+        source = inspect.getsource(integration)
+        assert "add_update_listener" not in source
