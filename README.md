@@ -11,8 +11,10 @@ A **Home Assistant custom integration** (HACS-compatible) for HikCentral Pro (Bu
 - **Live Video (optional)** — RTSP bridge script (`rtsp_bridge.py`) for the bundled go2rtc, giving on-demand live streams in Lovelace
 - **System Diagnostics Sensors** — online controller count, total doors, total cameras
 - **Door Action Service** — `hikcentral_district.door_action` with `door_id` + `action` fields
+- **Snapshot Refresh Service** — `hikcentral_district.refresh_snapshot`: fresh JPEG (Authenty → thumbnail → ffmpeg) written atomically to `www/snapshots/`
+- **Intercom Card** — `custom:district-intercom-card` Lovelace card (snapshot cover + refresh, full-width Open, live popup with view switching) — shipped inside the integration, see [Intercom Card](#intercom-card-district-intercom-card)
 - **Config Flow** — URL, username, password, SSL toggle, scan interval (10–300 s)
-- **Options Flow** — multi-select which doors and cameras to expose
+- **Options Flow** — multi-select which doors and cameras to expose + `extra_door_ids`
 
 ## Requirements
 
@@ -43,8 +45,9 @@ Copy `custom_components/hikcentral_district/` into your Home Assistant's
 directory — the integration from this checkout, **browser_mod v3.2.1** (popup
 dependency, installed straight from the GitHub zipball), the **district
 dashboard** (`.storage/lovelace.district` + dashboard entry +
-`/browser_mod.js` resource), and — optionally — the 10-minute snapshot
-refresh automation:
+`/browser_mod.js` and `/local/district/district-intercom-card.js?v=<version>`
+resources), and a **one-time snapshot seed** (`scripts/refresh_district_snapshots.py`
+copied into `<config>/scripts/` and run once, best-effort):
 
 ```bash
 git clone https://github.com/megastruktur/hikcentral-district
@@ -55,7 +58,7 @@ cd hikcentral-district
 
 # real run (seeds the integration config entry from these env vars):
 HIK_URL=https://your-hikcentral:443 HIK_USER=you HIK_PASS='secret' \
-  ./install.sh --config /path/to/ha/config --yes --with-snapshot-automation
+  ./install.sh --config /path/to/ha/config --yes
 ```
 
 Then **restart Home Assistant** and open `<ha>/district`. Without `HIK_*`
@@ -99,6 +102,9 @@ See `deploy/docker-compose.example.yaml` and `dashboards/README.md`.
 |---|---|
 | Selected Doors | Multi-select which doors to create entities for |
 | Selected Cameras | Multi-select which cameras to create entities for |
+| Extra Door IDs | Comma-separated HikCentral door IDs to fetch directly by ID (doors the list call does not return — see [Door Discovery](#door-discovery)) |
+| Live Snapshots | Fetch real current frames via the Authenty protocol (default on) |
+| Stream URL Template | go2rtc URL with `{id}` placeholder for live views (see [Live Video](#live-video-optional)) |
 
 ## Door Discovery
 
@@ -107,13 +113,13 @@ On every poll cycle the coordinator discovers doors in two ways and merges them
 
 1. **List discovery** — `POST /ISAPI/Bumblebee/ACS/DoorElements` enumerates the
    doors visible to the account; full per-door status is then fetched for each.
-2. **Extra door IDs** — the hardcoded `EXTRA_DOOR_IDS` (in `const.py`) are
-   fetched directly by ID and merged into the result.
+2. **Extra door IDs** — the `extra_door_ids` option (integration **Options**,
+   comma-separated) is fetched directly by ID and merged into the result.
 
-The extra IDs exist because these doors are present on this district's
-HikCentral server, but the account's list call does **not** return them. A
-direct `GET /ISAPI/Bumblebee/ACS/DoorElements/{id}` still works for each
-(verified live 2026-08-15):
+Extra IDs are needed when doors exist on the HikCentral server but the
+account's list call does **not** return them. A direct
+`GET /ISAPI/Bumblebee/ACS/DoorElements/{id}` still works for each. Example —
+the district this repo was built for (verified live 2026-08-15/17):
 
 | Extra Door ID | Name |
 |---|---|
@@ -122,9 +128,13 @@ direct `GET /ISAPI/Bumblebee/ACS/DoorElements/{id}` still works for each
 | 1007 | Kalitka_MR1-2 |
 | 536 | дверь_MR5 P2A |
 | 538 | дверь_MR5 P2B |
+| 1004 | Kalitka_1.6 |
+| 1290 | Kalitka MR5 |
+| 1396 | Vyezd2.3 (30.18) |
+| 1397 | Vezd2.0 (31.151) |
 
-These IDs are intentionally hardcoded — this repository is district-specific,
-and they are deliberately **not** a config-flow option. A failed fetch of an
+Set them in Settings → Devices → HikCentral District → Configure (the entry
+reloads and the extra lock/binary-sensor entities appear). A failed fetch of an
 extra door is logged as a warning and skipped; it never breaks the update cycle.
 
 ## Entity Types
@@ -160,6 +170,23 @@ service: hikcentral_district.door_action
 data:
   door_id: "996"   # Door element ID
   action: 1        # 1=unlock/open, 2=lock, 3=remain unlocked, 4=remain locked
+```
+
+### `hikcentral_district.refresh_snapshot`
+
+Fetch a fresh snapshot for a camera entity and store it as a static file for
+dashboard covers. Chain: live Authenty frame → HikCentral thumbnail → ffmpeg
+RTSP fallback. The JPEG is written atomically (tmp + rename) to
+`<config>/www/snapshots/<filename>` (served as `/local/snapshots/<filename>`),
+the camera entity's cached image is updated, and its `last_snapshot` attribute
+is bumped (ISO-8601 UTC). On failure the service raises an error and no file
+is written.
+
+```yaml
+service: hikcentral_district.refresh_snapshot
+data:
+  entity_id: camera.mr5_p2a   # target camera entity
+  filename: mr5-p2a.jpg       # optional; default = entity_id without domain + .jpg
 ```
 
 ## Door Actions
@@ -242,6 +269,105 @@ rtsp_bridge.py --host … --camera 240 --jpeg 3 > frame.jpg
 # raw H.264 append to file (debug)
 rtsp_bridge.py --host … --camera 240 --h264 /tmp/cam.h264
 ```
+
+## Intercom Card (district-intercom-card)
+
+Since v0.6.0 the integration ships a Lovelace card for door-entry dashboards:
+`custom_components/hikcentral_district/frontend/district-intercom-card.js`.
+At every setup the integration idempotently syncs it to
+`<config>/www/district/district-intercom-card.js`, so a HACS update + HA
+restart updates the Python part **and** the card together. One vanilla web
+component file, no build step, no dependencies; includes a visual config
+editor (`getConfigElement`).
+
+Register the Lovelace resource **once** (install.sh does this; or manually
+Settings → Dashboards → Resources):
+
+```
+URL:  /local/district/district-intercom-card.js?v=0.6.0
+Type: JavaScript Module
+```
+
+The `?v=<version>` suffix busts the browser cache; bump it when the card
+changes.
+
+### Card config reference
+
+Views are configured **explicitly in the card config** — the card fetches
+nothing and hardcodes nothing.
+
+```yaml
+type: custom:district-intercom-card
+entity: lock.vyezd2_1                    # door lock entity; OR device: <device_id>
+views:                                   # any number of camera entities
+  - camera.mr3_30_93_vyesd_2_1
+  - camera.mr3_30_95_vyesd_2_1
+image: /local/snapshots/mr3-30-93.jpg    # optional cover; default placeholder
+snapshot_file: mr3-30-93.jpg             # optional refresh target; default = first view
+title: Vyezd 2.1                         # optional; default = lock/camera friendly name
+open_text: Open                          # optional, default "Open"
+```
+
+| Key | Required | Description |
+|---|---|---|
+| `entity` | one of `entity`/`device` | Lock entity for the Open button and door popup |
+| `device` | one of `entity`/`device` | Device ID; the lock entity is resolved via the entity registry |
+| `views` | no | Camera entities for refresh/popup; any count, manual list |
+| `image` | no | Cover image; default is a built-in placeholder |
+| `snapshot_file` | no | Target filename for refresh; default derived from the first view |
+| `title` | no | Card title |
+| `open_text` | no | Open button label (default `Open`) |
+
+Behavior:
+
+- **Cover** — `image` or placeholder. Refresh button (top-right, hidden when
+  `views` is empty) calls `hikcentral_district.refresh_snapshot` for the
+  active view, then reloads the cover with a cache-bust. Refresh failure
+  shows a toast and keeps the previous cover.
+- **Open** (bottom, full-width) — `lock.open`; hidden without `entity`/`device`
+  (camera-only mode, e.g. a lift camera with only `views:`).
+- **Card click** — browser_mod popup with the same card in live mode: live
+  stream of the active view + Open + a right-hand column of view buttons that
+  switch the stream (active highlighted). Without browser_mod the card falls
+  back to the native camera more-info dialog.
+- **Open-only** — views empty + lock present: placeholder cover, popup without
+  video (Open only). Useful for doors whose cameras are not streamable yet.
+
+Snapshots are seeded once at install time and refreshed **only by the refresh
+button** — there is no periodic automation.
+
+### Dashboard generator
+
+`dashboards/generate_district.py` emits `custom:district-intercom-card` cards
+from the private `dashboards/cameras.json` (gitignored; see
+`dashboards/cameras.example.json`): cameras sharing a `lock` become one card
+with all their entities as `views`; `lock: null` cameras become camera-only
+cards; an optional `locks_only` array produces Open-only cards for doors
+without cameras. See `dashboards/README.md`.
+
+### Migrating from the v7 picture-glance cards
+
+The pre-0.6.0 dashboard used `picture-glance` + `custom:popup-card` pairs per
+camera plus a 10-minute snapshot-refresh automation. To migrate:
+
+1. Update to v0.6.0 via HACS and restart HA.
+2. Register the card resource once (URL above), if install.sh did not.
+3. Rebuild `dashboards/cameras.json` (add `locks_only` entries for doors
+   without cameras if needed) and regenerate:
+   `python3 dashboards/generate_district.py <dashboard.json>` — legacy
+   picture-glance/popup-card pairs are replaced in place, other cards are kept.
+4. Remove the old `district snapshots refresh` automation (back up
+   `automations.yaml` first) and the `shell_command` entry if present.
+5. Seed snapshots once: `python3 /config/scripts/refresh_district_snapshots.py`
+   inside the HA container.
+
+### Deploy rule (HACS only)
+
+Updates to a live HA go **only through HACS**: push to GitHub + GitHub Release
+(version bump in `manifest.json` is mandatory, otherwise HACS will not offer
+the update) → HACS → HikCentral District → Update → restart HA. Never copy
+integration files into the HA config dir directly; the card JS travels inside
+the integration and is synced to `www/district/` at setup.
 
 ## Real Doors
 
