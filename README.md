@@ -2,6 +2,14 @@
 
 A **Home Assistant custom integration** (HACS-compatible) for HikCentral Pro (Bumblebee API v2.x). Controls door locks, monitors door contact sensors, displays camera streams, and exposes system diagnostics for a HikCentral-based access control system.
 
+## Screenshots
+
+| Desktop — two-column district board | Live popup with the Open button |
+|---|---|
+| [![District dashboard](docs/district-desktop.jpg)](docs/district-desktop.jpg) | [![Live popup](docs/district-popup.jpg)](docs/district-popup.jpg) |
+
+Mobile collapses to a single column natively: [![Mobile](docs/district-mobile.jpg)](docs/district-mobile.jpg)
+
 ## Features
 
 - **Door Locks** — Lock/unlock/open, remain locked/unlocked per door (actions 1–4 via raw HTTP PUT)
