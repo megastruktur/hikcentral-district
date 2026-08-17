@@ -33,7 +33,7 @@
  *   - device: resolved to a lock entity via the entity registry websocket.
  */
 
-const VERSION = "0.6.5";
+const VERSION = "0.6.6";
 const CARD_TAG = "district-intercom-card";
 const EDITOR_TAG = "district-intercom-card-editor";
 const SNAPSHOT_BASE = "/local/snapshots/";
@@ -1200,11 +1200,18 @@ class DistrictIntercomCardEditor extends HTMLElement {
       })
       .filter(Boolean);
 
-    const config = { views };
+    // Start from the current config so unknown/extra keys survive, always
+    // (re-)assert the type (HA rejects config-changed without it and drops
+    // to the YAML editor), set/delete the managed fields, and always emit
+    // views (empty textarea -> []).
+    const config = { ...(this._config || {}) };
+    config.type = "custom:" + CARD_TAG;
     for (const key of ["title", "entity", "image", "snapshot_file", "open_text", "device"]) {
       const v = val(key);
       if (v) config[key] = v;
+      else delete config[key];
     }
+    config.views = views;
 
     this._config = config;
     this.dispatchEvent(

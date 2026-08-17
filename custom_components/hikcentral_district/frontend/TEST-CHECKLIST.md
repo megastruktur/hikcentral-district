@@ -1,6 +1,6 @@
 # district-intercom-card — manual test checklist
 
-Run on a live Home Assistant after the integration (0.6.5+) is installed via
+Run on a live Home Assistant after the integration (0.6.6+) is installed via
 HACS and the Lovelace resource is registered
 (`/local/district/district-intercom-card.js?v=<version>`, JavaScript Module).
 
@@ -20,7 +20,7 @@ Conventions used below:
       with no changes shows a friendly "Nothing configured yet" state, not an
       error card.
 - [ ] Console shows one info line
-      `district-intercom-card v0.6.5` and no red errors from this file.
+      `district-intercom-card v0.6.6` and no red errors from this file.
 - [ ] Card follows the active theme: switch HA to dark mode — card background,
       text, and borders follow (no white card stuck on a dark dashboard).
 
@@ -165,6 +165,10 @@ Edit the card in UI mode (pencil → card → edit).
 - [ ] Existing YAML config pre-fills all fields, including views
       (`camera.x | Label` lines for labeled views).
 - [ ] Typing in any field live-previews the card (config-changed fires).
+- [ ] Regression: editing any field keeps the editor in VISUAL mode — it must
+      NOT flip to the YAML editor or show "Configuration error: No type
+      provided" (the emitted config always carries
+      `type: custom:district-intercom-card`).
 - [ ] Save, reopen the editor: values are unchanged (round-trip). Views with
       labels survive the round-trip.
 - [ ] Clearing a field removes that key from the saved YAML (no empty strings
