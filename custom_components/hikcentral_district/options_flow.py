@@ -10,6 +10,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig
 
 from .const import DOMAIN
 
@@ -59,11 +60,11 @@ class HikCentralDistrictOptionsFlow(config_entries.OptionsFlow):
         schema_dict: dict[vol.Marker, Any] = {}
         if doors:
             schema_dict[vol.Optional("selected_doors", default=selected_doors)] = (
-                cv_select_multi(doors)
+                select_multi_selector(doors)
             )
         if cameras:
             schema_dict[vol.Optional("selected_cameras", default=selected_cameras)] = (
-                cv_select_multi(cameras)
+                select_multi_selector(cameras)
             )
         schema_dict[vol.Optional("scan_interval", default=scan_interval)] = vol.All(
             int, vol.Range(min=10, max=300)
@@ -110,6 +111,19 @@ class HikCentralDistrictOptionsFlow(config_entries.OptionsFlow):
         )
 
 
-def cv_select_multi(choices: list[tuple[str, str]]) -> vol.Schema:
-    """Build a multi-select selector from (id, display_name) pairs."""
-    return vol.Schema([vol.In(dict(choices))])
+def select_multi_selector(choices: list[tuple[str, str]]) -> SelectSelector:
+    """Build a multi-select selector from (id, display_name) pairs.
+
+    Uses HA's SelectSelector (not a bare vol.In list) so the schema can be
+    serialized by voluptuous_serialize for the frontend — a bare
+    ``vol.Schema([vol.In(...)])`` raises ValueError in
+    ``data_entry_flow._prepare_result_json``.
+    """
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=[
+                {"value": choice_id, "label": label} for choice_id, label in choices
+            ],
+            multiple=True,
+        )
+    )
