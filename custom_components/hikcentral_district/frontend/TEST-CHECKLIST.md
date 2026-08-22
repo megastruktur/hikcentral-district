@@ -1,6 +1,6 @@
 # district-intercom-card — manual test checklist
 
-Run on a live Home Assistant after the integration (0.6.6+) is installed via
+Run on a live Home Assistant after the integration (0.6.10+) is installed via
 HACS and the Lovelace resource is registered
 (`/local/district/district-intercom-card.js?v=<version>`, JavaScript Module).
 
@@ -16,11 +16,14 @@ Conventions used below:
 
 ## 0. Sanity / registration
 
-- [ ] Card appears in the card picker (search "district-intercom"). Adding it
-      with no changes shows a friendly "Nothing configured yet" state, not an
-      error card.
+- [ ] Card appears in the card picker as **"District Intercom"** (search
+      "district" or "intercom"). Adding it with no changes shows a friendly
+      "Nothing configured yet" state, not an error card.
+- [ ] (HA ≥ 2026.6) Pick a lock or camera entity first in the card picker:
+      the card appears under the **Community** suggestions — lock → open-only
+      config, camera → camera-only config.
 - [ ] Console shows one info line
-      `district-intercom-card v0.6.6` and no red errors from this file.
+      `district-intercom-card v0.6.10` and no red errors from this file.
 - [ ] Card follows the active theme: switch HA to dark mode — card background,
       text, and borders follow (no white card stuck on a dark dashboard).
 

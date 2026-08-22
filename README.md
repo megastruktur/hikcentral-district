@@ -407,16 +407,26 @@ restart updates the Python part **and** the card together. One vanilla web
 component file, no build step, no dependencies; includes a visual config
 editor (`getConfigElement`).
 
+The card is discoverable in the dashboard card picker as **"District
+Intercom"** (since v0.6.10) — search "district" or "intercom". On
+HA ≥ 2026.6, picking a `lock.` or `camera.` entity in the picker also offers
+the card under the **Community** suggestions (lock → open-only config,
+camera → camera-only config). Alternatively add it via *Manual* with
+`type: custom:district-intercom-card`.
+
 Register the Lovelace resource **once** (install.sh does this; or manually
 Settings → Dashboards → Resources):
 
 ```
-URL:  /local/district/district-intercom-card.js?v=0.6.0
+URL:  /local/district/district-intercom-card.js?v=0.6.10
 Type: JavaScript Module
 ```
 
-The `?v=<version>` suffix busts the browser cache; bump it when the card
-changes.
+The `?v=<version>` suffix busts the browser cache; it is kept current
+automatically — on every HA restart the integration merges its manifest
+version into the registered resource URL, so a normal HACS update + restart
+is enough. After an update, hard-reload the browser tab once (dashboards
+import resources at page load) before reopening the card picker.
 
 ### Card config reference
 

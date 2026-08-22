@@ -33,7 +33,7 @@
  *   - device: resolved to a lock entity via the entity registry websocket.
  */
 
-const VERSION = "0.6.6";
+const VERSION = "0.6.10";
 const CARD_TAG = "district-intercom-card";
 const EDITOR_TAG = "district-intercom-card-editor";
 const SNAPSHOT_BASE = "/local/snapshots/";
@@ -1231,6 +1231,39 @@ if (!customElements.get(CARD_TAG)) {
 }
 if (!customElements.get(EDITOR_TAG)) {
   customElements.define(EDITOR_TAG, DistrictIntercomCardEditor);
+}
+
+/* ------------------------------------------------- card picker entry */
+
+// The HA card picker lists ONLY types present in window.customCards
+// (home-assistant/frontend src/data/lovelace_custom_cards.ts). Always push
+// onto the existing array — never reassign — the frontend captures the
+// array reference at load. Dedupe guards a double module eval (stale +
+// fresh resource URL registered side by side).
+window.customCards = window.customCards || [];
+if (!window.customCards.some((c) => c && c.type === "custom:" + CARD_TAG)) {
+  window.customCards.push({
+    type: "custom:" + CARD_TAG,
+    name: "District Intercom",
+    description:
+      "HikCentral door entry — camera views, snapshot refresh, open button",
+    preview: true, // live preview from getStubConfig(): friendly empty state
+    documentationURL: "https://github.com/megastruktur/hikcentral-district",
+    // HA >= 2026.6: entity-first picker shows this under "Community".
+    // Unknown keys are ignored by older HA — safe to ship unconditionally.
+    getEntitySuggestion: (hass, entityId) => {
+      const domain = String(entityId || "").split(".")[0];
+      if (domain === "lock")
+        return {
+          config: { type: "custom:" + CARD_TAG, entity: entityId, views: [] },
+        };
+      if (domain === "camera")
+        return {
+          config: { type: "custom:" + CARD_TAG, views: [entityId] },
+        };
+      return null;
+    },
+  });
 }
 
 console.info(
